@@ -1,0 +1,10 @@
+# Versioni fissate per evitare segfault ABI-incompatibility
+# tra numpy 2.x / pyarrow 25 / streamlit 1.45 su Python 3.12
+streamlit==1.42.0
+psycopg[binary]==3.2.9
+pandas==2.2.3
+numpy<2
+pyarrow<18
+plotly==5.24.1
+# Serve solo con auth_mode = "oidc" (st.login di Streamlit)
+Authlib>=1.3.2

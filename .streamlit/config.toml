@@ -1,0 +1,18 @@
+[theme]
+base            = "dark"
+primaryColor    = "#00c2c7"
+backgroundColor = "#0a1628"
+secondaryBackgroundColor = "#111f3a"
+textColor       = "#f0f4ff"
+font            = "sans serif"
+
+[server]
+# Pubblica la cartella static/ sotto /app/static/: serve per manifest e icone
+enableStaticServing = true
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
+
+[browser]
+gatherUsageStats = false
