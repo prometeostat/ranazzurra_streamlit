@@ -20,7 +20,7 @@ import pandas as pd
 import streamlit as st
 
 from db import execute, query_df
-from queries import (ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_TAKEN_SQL,
+from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_TAKEN_SQL,
                      ATHLETE_INSERT_SQL, ATHLETE_REACTIVATE_SQL,
                      ATHLETE_UPDATE_SQL, ATHLETES_ADMIN_SQL, COMPANIES_SQL,
                      COMPETITION_DEACTIVATE_SQL, COMPETITION_INSERT_SQL,
@@ -259,3 +259,16 @@ def riattiva_manifestazione(comp_id: int) -> int:
     n = execute(COMPETITION_REACTIVATE_SQL, (_user_id(), int(comp_id)))
     _svuota_cache()
     return n
+
+
+# ══════════════════════════════════════════════════════════════════
+# Registro accessi
+# ══════════════════════════════════════════════════════════════════
+
+def svuota_registro() -> int:
+    """
+    Cancella davvero le righe del registro accessi e restituisce quante ne
+    ha tolte. Qui la cancellazione fisica ci sta: un log si svuota, non si
+    disattiva, e tenere righe morte in giro non aiuterebbe nessuno.
+    """
+    return int(execute(ACCESS_LOG_DELETE_SQL) or 0)

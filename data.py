@@ -14,6 +14,7 @@ import streamlit as st
 import season as season_mod
 from db import query_df
 from queries import (
+    ACCESS_LOG_SQL, ACCESS_LOG_STATS_SQL,
     AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
     FIN_LEADERBOARD_SQL, FREQUENCY_SQL, PB_SQL, RACES_SQL, RANKING_SQL,
     SEASONS_SQL, SEASON_META_SQL, SPLITS_BY_EVENT_SQL, SPLITS_SQL, TREND_SQL,
@@ -243,3 +244,18 @@ def load_agenda(season_year: int) -> pd.DataFrame:
     start, end = season_mod.bounds(season_year)
     df = query_df(AGENDA_SQL, (start, end))
     return _num(df, ("comp_id", "nostre_gare", "nostri_atleti"))
+
+
+# ══════════════════════════════════════════════════════════════════
+# Registro accessi
+# ══════════════════════════════════════════════════════════════════
+# Niente cache qui: il registro lo guarda solo l'amministratore, e quando
+# lo guarda vuole vedere l'ultimo accesso, non quello di un'ora fa.
+
+def load_access_log(limite: int = 500) -> pd.DataFrame:
+    return query_df(ACCESS_LOG_SQL, (int(limite),))
+
+
+def access_log_stats() -> dict:
+    df = query_df(ACCESS_LOG_STATS_SQL)
+    return df.iloc[0].to_dict() if not df.empty else {}

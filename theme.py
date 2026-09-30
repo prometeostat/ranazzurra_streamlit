@@ -135,7 +135,29 @@ input, textarea, .stTextInput input, .stDateInput input {
 div[data-baseweb="select"] > div, div[data-baseweb="popover"] div {
     background: #ffffff !important; color: var(--white) !important;
 }
-div[data-baseweb="calendar"] { background: #ffffff !important; }
+/* Calendario del date_input. Sul chiaro BaseWeb continua a disegnarlo con i
+   colori scuri di config.toml: le caselle vuote della prima settimana
+   restavano nere e il nome del mese quasi invisibile. Si riporta a bianco
+   tutto il calendario, pseudo-elementi compresi, e poi si ridisegna a mano
+   il giorno scelto e quello sotto al mouse. */
+div[data-baseweb="calendar"], div[data-baseweb="calendar"] *,
+div[data-baseweb="calendar"] *::before, div[data-baseweb="calendar"] *::after {
+    background-color: #ffffff !important;
+    color: var(--white) !important;
+}
+/* Il giorno selezionato e' l'unico con tabindex 0, BaseWeb ci mette il fuoco. */
+div[data-baseweb="calendar"] [role="gridcell"][tabindex="0"] > div {
+    background-color: var(--teal) !important;
+    color: #ffffff !important;
+    border-radius: 50% !important;
+}
+div[data-baseweb="calendar"] [role="gridcell"]:hover > div {
+    background-color: rgba(0,131,138,0.14) !important;
+    border-radius: 50% !important;
+}
+div[data-baseweb="calendar"] [role="gridcell"][tabindex="0"]:hover > div {
+    background-color: var(--teal) !important; color: #ffffff !important;
+}
 /* Bottoni, bottoni di form e link-bottoni: sul chiaro nascono scuri perche'
    il tema di config.toml e' dark. Attenzione: mai scrivere parentesi angolari
    nei commenti di questo CSS, il sanitizer di st.html le legge come tag e
@@ -314,6 +336,9 @@ a.kpi-link:hover .kpi-sub { color:var(--sky); }
 /* ── Barra di navigazione in basso (stile app) ── */
 .st-key-bottombar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 9990;
+    /* Da sola resterebbe larga quanto il contenuto e appiccicata a sinistra:
+       la barra prende tutto lo schermo e i bottoni si centrano sotto. */
+    width: 100% !important;
     background: var(--sidebar);
     border-top: 1px solid var(--border);
     backdrop-filter: blur(14px);
@@ -324,6 +349,8 @@ a.kpi-link:hover .kpi-sub { color:var(--sky); }
    affiancate come in una tab bar. */
 .st-key-bottombar [data-testid="stHorizontalBlock"] {
     gap: 2px !important; flex-wrap: nowrap !important; align-items: stretch;
+    width: 100% !important; max-width: 704px;
+    margin-left: auto; margin-right: auto;
 }
 .st-key-bottombar [data-testid="stColumn"] {
     flex: 1 1 0 !important; width: auto !important;

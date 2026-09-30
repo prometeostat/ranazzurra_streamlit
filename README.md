@@ -25,6 +25,7 @@ ranazzurra_streamlit/
 │   ├── cerca.py        indice: scheda atleta e classifiche
 │   ├── scheda.py       selettore atleta, riepilogo, ultime gare, elenco tempi
 │   ├── confronto.py    due atleti testa a testa, gare in comune
+│   ├── accessi.py      registro accessi, solo admin
 │   ├── classifiche.py  top 5 per specialita', filtro categoria, M e F divisi
 │   ├── profilo.py      account, preferiti, tema, installazione
 │   ├── gestione.py     indice delle anagrafiche (solo admin)
@@ -61,34 +62,122 @@ d'ambiente `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, oppure
 
 ## Accesso
 
-Si configura in `[app]` dentro i secrets.
+Si entra con **l'e-mail dell'anagrafica e una password scelta dall'atleta**.
+Nessun provider esterno, nessun codice FIN: il nome utente e' l'indirizzo che
+la societa' ha in `athletes.email`, e la password vive a database come hash.
 
-`auth_mode = "code"` (default): l'atleta entra con codice FIN e data di
-nascita, verificati su `athletes`. Nessun provider esterno.
+### Primo accesso
 
-`auth_mode = "oidc"`: `st.login()` di Streamlit con un provider OpenID
-Connect; l'email restituita viene cercata in `athletes.email`. Serve la
-sezione `[auth]` nei secrets e il pacchetto Authlib.
+Chi non ha ancora una password apre la scheda *Primo accesso*, si riconosce
+con **e-mail e data di nascita** e sceglie la sua password. La data di
+nascita e' a database per tutti i tesserati, il codice FIN no (sette attivi
+non ce l'hanno), per questo la verifica passa di li'.
 
-`auth_mode = "open"`: nessun login, solo per sviluppo.
+L'amministratore puo' anche generare una **password temporanea** dalla scheda
+di un atleta in Anagrafica: si vede una volta sola, si consegna a voce, e al
+primo ingresso l'app obbliga a sostituirla.
+
+### Come sono tenute le password
+
+Hash **scrypt** della libreria standard (`n=16384, r=8, p=1`, sale casuale da
+16 byte), circa 45 millisecondi a verifica, salvato in un campo che si
+descrive da solo:
+
+```
+scrypt$16384$8$1$<sale base64>$<hash base64>
+```
+
+In chiaro non esiste da nessuna parte: nemmeno l'amministratore puo'
+rileggere la password di qualcuno. Se serve, si azzera e l'atleta ne sceglie
+una nuova. Il confronto e' a tempo costante (`hmac.compare_digest`) e il
+messaggio di errore e' sempre lo stesso, "e-mail o password non corrette",
+per non far capire dall'esterno quali indirizzi esistono.
+
+Dopo cinque tentativi sbagliati l'account si blocca per quindici minuti; il
+contatore sta a database, quindi il blocco vale ovunque e non si aggira
+cambiando browser. Ogni tentativo, riuscito o no, finisce nel registro
+accessi.
+
+### Cosa puo' fare l'amministratore
+
+Dalla scheda di un atleta in **Anagrafica atleti**, riquadro *Accesso
+all'app*: vede se la password esiste, quando e' stata impostata e quando c'e'
+stato l'ultimo accesso, e ha tre bottoni. *Azzera password* toglie la
+credenziale e l'atleta rifa' il primo accesso. *Password temporanea* ne
+genera una da consegnare, con cambio obbligatorio al primo ingresso.
+*Sospendi accesso* blocca l'ingresso senza toccare la password, per esempio
+quando qualcuno lascia la squadra.
+
+L'atleta cambia la sua password da **Profilo**, indicando quella attuale.
+
+### Le tabelle
+
+```sql
+CREATE TABLE athlete_credentials (
+    athlete_id                      integer PRIMARY KEY REFERENCES athletes(id),
+    creation_utc_date_time          timestamp NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+    creation_user_id                integer NOT NULL,
+    last_modification_utc_date_time timestamp,
+    last_modification_user_id       integer,
+    password_hash                   varchar(300) NOT NULL,
+    must_change                     boolean NOT NULL DEFAULT false,
+    failed_attempts                 integer NOT NULL DEFAULT 0,
+    locked_until_utc                timestamp,
+    last_login_utc                  timestamp,
+    is_enabled                      boolean NOT NULL DEFAULT true
+);
+CREATE UNIQUE INDEX ux_athletes_email_attivi ON athletes (lower(btrim(email)))
+    WHERE is_deleted = FALSE AND email IS NOT NULL AND btrim(email) <> '';
+```
+
+L'e-mail resta una sola, quella di `athletes`: qui ci sono solo le
+credenziali. L'indice unico parziale impedisce che due tesserati attivi
+finiscano con lo stesso indirizzo, che con l'e-mail come nome utente sarebbe
+un guaio.
+
+**Da sistemare prima di aprire a tutti:** su 51 tesserati attivi solo 30
+hanno un'e-mail in anagrafica. Gli altri 21 non possono entrare finche' non
+gliela si aggiunge con Modifica.
+
+### Le altre modalita'
+
+Restano disponibili cambiando `auth_mode` in `[app]`: `code` per il vecchio
+accesso con codice FIN e data di nascita, `oidc` per un provider OpenID
+Connect (serve la sezione `[auth]` nei secrets e Authlib), `open` per
+sviluppare senza login, dove l'ospite e' amministratore per definizione.
 
 ### Ruoli
 
-Admin e allenatori scelgono qualsiasi atleta dalla barra laterale, tutti gli
-altri aprono la propria scheda. Si indicano in `[app]` nei secrets, in tre
-modi alternativi, e vale il primo che corrisponde:
+Admin e allenatori vedono la sezione Gestione, tutti gli altri no. Si
+indicano in `[app]` nei secrets, in tre modi alternativi, e vale il primo che
+corrisponde:
 
 ```toml
 admin_athlete_ids = [52]        # athletes.id, il piu' stabile
 admin_fin_codes   = [281728]    # codice FIN
-admin_emails      = ["..."]     # SOLO con auth_mode = "oidc"
+admin_emails      = ["..."]     # con auth_mode "password" oppure "oidc"
 coach_athlete_ids = []
 coach_fin_codes   = []
 coach_emails      = []
 ```
 
-Attenzione alle email: in modalita' `code` l'app non chiede mai l'indirizzo,
-quindi `admin_emails` non scatta. Li' servono id o codice FIN.
+Il ruolo si ricalcola dai secrets a ogni rerun, non viene congelato al
+momento del login: se aggiungi un id alla lista degli amministratori la
+modifica vale subito, senza uscire e rientrare.
+
+**Se in locale vedi Gestione e online no**, il motivo e' quasi sempre questo:
+in locale `secrets.toml` ha `auth_mode = "open"`, e l'ospite della modalita'
+aperta e' amministratore per definizione, mentre online si entra davvero e il
+ruolo dipende dalle liste. Se il blocco `[app]` non e' stato incollato nei
+secrets dell'ambiente remoto (su Streamlit Cloud sta in App settings,
+Secrets), non c'e' nessun amministratore e la voce Gestione sparisce. Va
+incollato tutto il blocco, `token_secret` compreso, se no il token del "resta
+connesso" viene firmato con la chiave di sviluppo.
+
+Per capirlo senza indovinare c'e' l'espansore **Diagnostica accesso** nel
+Profilo: dice la modalita' attiva, se il blocco `[app]` e' stato letto,
+quanti amministratori sono configurati, il proprio id e codice FIN e il ruolo
+calcolato in quel momento. Non mostra nessun valore segreto.
 
 La spunta "resta connesso" salva un token firmato nella query string, non un
 cookie: Streamlit i cookie li legge ma non li scrive.
@@ -213,6 +302,71 @@ si vuole marcarli nell'elenco.
 
 ---
 
+## Registro accessi
+
+Ogni accesso, uscita e tentativo fallito finisce nella tabella `access_log`
+a database. Funziona ovunque giri l'app, in locale come su Streamlit Cloud,
+e si interroga con una SELECT come tutto il resto.
+
+```sql
+CREATE TABLE access_log (
+    id                     serial PRIMARY KEY,
+    creation_utc_date_time timestamp NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+    creation_user_id       integer NOT NULL,
+    event_type             varchar(20) NOT NULL,   -- ACCESSO, USCITA, FALLITO, SVUOTATO
+    athlete_id             integer,
+    full_name              varchar(200),
+    fin_code               integer,
+    user_role              varchar(20),
+    via                    varchar(20),            -- code, oidc, token
+    note                   varchar(300)
+);
+CREATE INDEX ix_access_log_when ON access_log (creation_utc_date_time DESC);
+```
+
+Segue le convenzioni dello schema (id seriale, ora in UTC, `creation_user_id`
+per l'audit) con due scelte diverse dal resto: niente `is_deleted`, perche'
+un registro si svuota e non si disattiva, e nessuna foreign key su
+`athlete_id`, perche' un log deve sopravvivere anche a una riga di anagrafica
+che sparisce. Le date si scrivono in UTC e si rileggono in ora italiana
+direttamente in SQL, con `AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome'`.
+
+`via` dice come si e' entrati: `code` col codice FIN, `oidc` col provider,
+`token` quando la sessione e' stata ripresa dal "resta connesso". Dei
+tentativi falliti si registra il codice FIN provato, mai la data di nascita.
+La scrittura non solleva mai eccezioni: se il database non risponde, o la
+tabella non c'e' ancora, si entra lo stesso e semplicemente non si registra.
+
+La pagina **Registro accessi** in Gestione, riservata all'amministratore,
+mostra le ultime 500 righe con filtro per tipo di evento e ricerca libera su
+nome, codice FIN e note, piu' tre contatori in cima. Due bottoni: *Scarica
+LOG* esporta in txt quello che e' a video, con intestazione e data di
+esportazione, e *Cancella* svuota la tabella dopo una conferma esplicita.
+Quella cancellazione e' fisica, non una disattivazione: l'unica riga che
+resta e' quella che registra lo svuotamento, con chi l'ha fatto e quante
+righe ha tolto.
+
+Le letture del registro non passano dal cache: chi apre quella pagina vuole
+vedere l'ultimo accesso, non quello di un'ora fa.
+
+### In alternativa, un file di testo
+
+Resta possibile scrivere le stesse righe anche su file, mettendo il percorso
+in `[app]`:
+
+```toml
+access_log_file = "G:/Il mio Drive/Job/ranazzurra/accessi.txt"
+```
+
+Le due cose convivono: il database sempre, il file in piu' quando c'e' la
+chiave. Attenzione pero' a dove gira l'app, perche' il file lo scrive il
+processo Python: su Drive ci arriva solo se l'app gira su un computer dove
+Drive e' montato. Su Streamlit Cloud il filesystem e' quello di un container
+effimero, il file riparte da zero a ogni riavvio e sul Drive non arriva mai.
+Per quello c'e' la tabella.
+
+---
+
 ## Chi vede cosa
 
 Tutti i tesserati vedono i tempi di tutti: la scelta dell'atleta e' libera e
@@ -266,6 +420,9 @@ Manifestazioni divise in **In programma** e **Concluse**, con nome cliccabile
 sul `website_link`, organizzatore, vasche, cronometraggio, quante nostre gare
 e quanti nostri atleti c'erano, e il link al programma PDF quando c'e'.
 
+Delle concluse si mostrano le ultime cinque, le altre si trovano
+restringendo il periodo o con la ricerca.
+
 Attenzione a come sono fatti i dati: a database arrivano solo le
 manifestazioni dove abbiamo gia' gareggiato, perche' le porta lo scraper dei
 risultati. Oggi sono 524 e **nessuna e' futura**: l'ultima e' del 12/09/2026.
@@ -318,6 +475,12 @@ risultati collegati restano a database e tornano appena la riattivi. Il form
 controlla che la fine non preceda l'inizio, che le iscrizioni non chiudano
 dopo la partenza e che i link comincino per http.
 
+
+Sotto alle azioni c'e' il riquadro **Accesso all'app**: stato della password
+dell'atleta selezionato, data dell'ultimo accesso e i tre bottoni per
+azzerare la password, generare una temporanea o sospendere l'accesso. Chi non
+ha un'e-mail in anagrafica non puo' entrare, e il riquadro lo dice.
+
 ---
 
 La pagina "Gare e passaggi" e' stata tolta dal menu. Il file `views/gare.py`
@@ -358,6 +521,14 @@ CSS. Un innocuo `/* e' un <a>, non un <button> */` viene letto come tag e fa
 buttare via l'intero blocco di stile, lasciando l'app senza grafica in tutti e
 due i temi. Successo, sistemato, e vale la pena ricordarselo.
 
+Il calendario del `date_input` e' l'angolo piu' ostico del tema chiaro.
+BaseWeb lo disegna con i colori scuri di `config.toml` e alcuni pezzi non si
+raggiungono con i selettori normali: le caselle vuote della prima settimana
+restavano un rettangolo nero anche forzando il fondo bianco sulle celle,
+perche' il nero arrivava da uno pseudo-elemento. La cura e' brutale ma
+funziona: bianco su tutto il calendario, `*::before` e `*::after` compresi, e
+poi il giorno scelto ridisegnato a mano (e' l'unico con `tabindex="0"`).
+
 In modalita' chiara servono ritocchi mirati perche' i widget nascono scuri dal
 tema di `config.toml`: bottoni, link-bottoni (che sono ancore, non bottoni),
 pallini dei radio (il cerchio precede l'input nel DOM, quindi lo stato
@@ -388,5 +559,3 @@ non ne e' stato importato nessuno: va sistemato lo scraper FIN Veneto.
 Il database contiene solo i nostri tesserati e `athlete_races` non ha la
 posizione in gara, quindi le classifiche sono interne alla squadra. Il
 confronto con gli avversari passa dal punteggio FIN.
-#   r a n a z z u r r a _ s t r e a m l i t  
- 

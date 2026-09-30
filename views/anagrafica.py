@@ -263,6 +263,91 @@ else:
         st.session_state["anag_conferma"] = int(scelto)
         st.rerun()
 
+# ══════════════════════════════════════════════════════════════════
+# Credenziali dell'atleta selezionato
+# ══════════════════════════════════════════════════════════════════
+# La password non si puo' rileggere, nemmeno da qui: si azzera, e l'atleta
+# rifa' il primo accesso con e-mail e data di nascita, oppure se ne genera
+# una temporanea da consegnargli, che al primo ingresso deve cambiare.
+
+def _quando(v) -> str:
+    q = pd.to_datetime(v, errors="coerce")
+    return "mai" if pd.isna(q) else q.strftime("%d/%m/%Y %H:%M")
+
+
+st.markdown('<div class="section-title">Accesso all\'app</div>',
+            unsafe_allow_html=True)
+
+mail_atleta = str(riga.get("email") or "").strip()
+stato = auth.stato_credenziali(int(scelto))
+
+if not mail_atleta:
+    st.warning("Questo tesserato non ha un'e-mail in anagrafica, quindi non "
+               "puo' entrare: l'indirizzo e' il nome utente. Aggiungilo con "
+               "Modifica.")
+elif not stato:
+    st.info(f"Nessuna password impostata. {riga['first_name']} puo' attivarsi "
+            f"da solo dalla scheda **Primo accesso**, con {mail_atleta} e la "
+            "sua data di nascita.")
+else:
+    sospeso = not bool(stato.get("is_enabled", True))
+    bloccato = bool(stato.get("bloccato"))
+    voci = [f"password impostata il {_quando(stato.get('creata_il'))}",
+            f"ultimo accesso {_quando(stato.get('ultimo_accesso'))}"]
+    if bool(stato.get("must_change")):
+        voci.append("deve ancora cambiare la temporanea")
+    if bloccato:
+        voci.append(f"bloccato fino alle {_quando(stato.get('bloccato_fino'))}")
+    if sospeso:
+        voci.append("accesso sospeso")
+    st.caption(f"{mail_atleta} · " + " · ".join(voci))
+
+if mail_atleta:
+    a1, a2, a3 = st.columns(3)
+
+    if a1.button("Azzera password", use_container_width=True,
+                 disabled=not stato,
+                 help="Toglie la password: l'atleta rifa' il primo accesso e "
+                      "ne sceglie una nuova."):
+        auth.azzera_password(int(scelto))
+        auth.registra_accesso("PASSWORD", id=int(scelto),
+                              nome=f"{riga['last_name']} {riga['first_name']}",
+                              nota="azzerata dall'amministratore")
+        st.session_state["anag_msg"] = (
+            f"Password azzerata: {riga['first_name']} puo' rifare il primo "
+            "accesso con la sua e-mail e la data di nascita.")
+        st.rerun()
+
+    if a2.button("Password temporanea", use_container_width=True,
+                 help="Ne genera una da consegnare a voce: al primo ingresso "
+                      "l'app obbliga a cambiarla."):
+        temporanea = auth.password_casuale()
+        auth.imposta_password(int(scelto), temporanea, da_cambiare=True)
+        auth.registra_accesso("PASSWORD", id=int(scelto),
+                              nome=f"{riga['last_name']} {riga['first_name']}",
+                              nota="temporanea generata dall'amministratore")
+        st.session_state["anag_temporanea"] = temporanea
+        st.rerun()
+
+    etichetta = "Riattiva accesso" if (stato and not stato.get("is_enabled", True)) \
+        else "Sospendi accesso"
+    if a3.button(etichetta, use_container_width=True, disabled=not stato):
+        nuovo = not bool(stato.get("is_enabled", True))
+        auth.abilita_accesso(int(scelto), nuovo)
+        auth.registra_accesso("PASSWORD", id=int(scelto),
+                              nome=f"{riga['last_name']} {riga['first_name']}",
+                              nota="accesso riattivato" if nuovo else "accesso sospeso")
+        st.session_state["anag_msg"] = ("Accesso riattivato." if nuovo
+                                        else "Accesso sospeso.")
+        st.rerun()
+
+_temp = st.session_state.pop("anag_temporanea", None)
+if _temp:
+    st.success("Password temporanea generata. Si vede una volta sola, "
+               "copiala adesso e consegnala a voce o di persona.")
+    st.code(_temp, language=None)
+    st.caption("Al primo ingresso l'app chiede di sostituirla.")
+
 # ── Conferma disattivazione ───────────────────────────────────────
 if st.session_state.get("anag_conferma") is not None:
     aid = int(st.session_state["anag_conferma"])

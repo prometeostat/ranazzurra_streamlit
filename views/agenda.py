@@ -121,12 +121,12 @@ st.markdown(f'<div class="section-title">Concluse · {len(passati)}</div>',
 if passati.empty:
     st.info("Nessuna manifestazione conclusa nel periodo.")
 else:
-    MOSTRA = 25
+    MOSTRA = 5
     st.markdown("".join(_scheda(r, False)
                         for r in passati.head(MOSTRA).to_dict("records")),
                 unsafe_allow_html=True)
     if len(passati) > MOSTRA:
         st.caption(f"Mostrate le ultime {MOSTRA} di {len(passati)}. "
-                   f"Restringi il periodo o usa la ricerca per trovare le altre.")
+                   f"Restringi il periodo o usa la ricerca per vedere le altre.")
 
 st.caption(f"Periodo: {season_mod.label(sy).lower()}.")

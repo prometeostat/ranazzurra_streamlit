@@ -44,7 +44,8 @@ if mio is not None:
 
 ruolo = {"admin": "Amministratore", "allenatore": "Allenatore"}.get(
     user.get("role", ""), "Atleta")
-st.caption(f"Sei collegato come {user.get('full_name', '—')} · {ruolo}.")
+st.caption(f"Sei collegato come {user.get('full_name', '—')} · {ruolo}"
+           + (f" · id {int(mio)}" if mio is not None else "") + ".")
 
 # ── Preferiti ─────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Preferiti</div>', unsafe_allow_html=True)
@@ -89,12 +90,51 @@ st.radio("Tema", options=["dark", "light"],
          format_func=lambda m: "Scuro" if m == "dark" else "Chiaro",
          horizontal=True, key="profilo_tema", on_change=_salva_tema)
 
+if auth.modalita() == "password" and mio is not None:
+    with st.expander("Cambia password"):
+        with st.form("cambio_password"):
+            vecchia = st.text_input("Password attuale", type="password")
+            n1 = st.text_input("Nuova password", type="password",
+                               help=f"Almeno {auth.MIN_PASSWORD} caratteri.")
+            n2 = st.text_input("Ripeti la nuova password", type="password")
+            salva = st.form_submit_button("Salva", type="primary",
+                                          use_container_width=True)
+        if salva:
+            if n1 != n2:
+                st.error("Le due password non coincidono.")
+            else:
+                errori = auth.cambia_password(int(mio), vecchia, n1,
+                                              user.get("email"))
+                for e in errori:
+                    st.error(e)
+                if not errori:
+                    st.success("Password cambiata. Vale dal prossimo accesso "
+                               "su tutti i dispositivi.")
+        st.caption("Se non ricordi quella attuale, chiedi in segreteria di "
+                   "azzerarla: poi rifai il primo accesso con e-mail e data "
+                   "di nascita.")
+
 with st.expander("Installa l'app sul telefono"):
     st.markdown(
         "**iPhone**: apri in Safari, tocca Condividi e poi Aggiungi a Home.  \n"
         "**Android**: menu di Chrome, Aggiungi a schermata Home.  \n\n"
         "Si apre a schermo intero come un'app. Serve la connessione: i dati "
         "arrivano dal database in tempo reale.")
+
+with st.expander("Diagnostica accesso"):
+    d = auth.diagnostica()
+    st.caption(
+        f"Modalita' di accesso: **{d['modalita']}**  \n"
+        f"Blocco `[app]` nei secrets: **{'letto' if d['secrets_app'] else 'assente'}**  \n"
+        f"Amministratori configurati: **{d['admin_configurati']}**  \n"
+        f"Il tuo id atleta: **{d['athlete_id']}** · codice FIN: **{d['fin_code']}**  \n"
+        f"Ruolo calcolato adesso: **{d['ruolo']}** "
+        f"(per id: {'si' if d['io_sono_admin_per_id'] else 'no'}, "
+        f"per codice FIN: {'si' if d['io_sono_admin_per_fin'] else 'no'})"
+    )
+    st.caption("Se qui manca l'amministratore ma in locale c'e', quasi sempre "
+               "e' perche' il blocco `[app]` dei secrets non e' stato incollato "
+               "nell'ambiente dove gira l'app.")
 
 st.markdown("---")
 if st.button("Esci", use_container_width=True):

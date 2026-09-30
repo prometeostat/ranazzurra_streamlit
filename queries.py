@@ -673,3 +673,193 @@ FROM competitions
 WHERE timing IS NOT NULL AND btrim(timing) <> ''
 ORDER BY 1
 """
+
+
+# ══════════════════════════════════════════════════════════════════
+# Registro accessi
+# ══════════════════════════════════════════════════════════════════
+
+# La tabella access_log tiene una riga per evento: entrata, uscita,
+# tentativo fallito, svuotamento del registro. Segue le convenzioni dello
+# schema (id seriale, creation_utc_date_time in UTC, creation_user_id), ma
+# niente is_deleted: un registro si svuota, non si disattiva.
+#
+#   CREATE TABLE access_log (
+#       id                     serial PRIMARY KEY,
+#       creation_utc_date_time timestamp NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+#       creation_user_id       integer NOT NULL,
+#       event_type             varchar(20) NOT NULL,
+#       athlete_id             integer,
+#       full_name              varchar(200),
+#       fin_code               integer,
+#       user_role              varchar(20),
+#       via                    varchar(20),
+#       note                   varchar(300)
+#   );
+#   CREATE INDEX ix_access_log_when ON access_log (creation_utc_date_time DESC);
+#
+# Nessuna foreign key su athlete_id: un log deve sopravvivere a tutto,
+# anche a una riga di anagrafica che sparisce.
+
+# %s: creation_user_id, event_type, athlete_id, full_name, fin_code,
+#     user_role, via, note
+ACCESS_LOG_INSERT_SQL = """
+INSERT INTO access_log (creation_user_id, event_type, athlete_id, full_name,
+                        fin_code, user_role, via, note)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+# Le date si girano in ora locale qui, cosi' la pagina non deve pensarci.
+# %s: limite
+ACCESS_LOG_SQL = """
+SELECT
+    id,
+    (creation_utc_date_time AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS quando,
+    event_type, athlete_id, full_name, fin_code, user_role, via, note
+FROM access_log
+ORDER BY creation_utc_date_time DESC, id DESC
+LIMIT %s
+"""
+
+ACCESS_LOG_STATS_SQL = """
+SELECT
+    count(*)                                                              AS righe,
+    min(creation_utc_date_time AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS dal,
+    max(creation_utc_date_time AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS al,
+    count(*) FILTER (WHERE event_type = 'ACCESSO')                        AS accessi,
+    count(*) FILTER (WHERE event_type = 'FALLITO')                        AS falliti
+FROM access_log
+"""
+
+ACCESS_LOG_DELETE_SQL = "DELETE FROM access_log"
+
+
+# ══════════════════════════════════════════════════════════════════
+# Credenziali degli atleti (accesso con e-mail e password)
+# ══════════════════════════════════════════════════════════════════
+
+# L'e-mail resta una sola, quella di athletes: qui ci sono solo le
+# credenziali, una riga per atleta.
+#
+#   CREATE TABLE athlete_credentials (
+#       athlete_id                      integer PRIMARY KEY REFERENCES athletes(id),
+#       creation_utc_date_time          timestamp NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+#       creation_user_id                integer NOT NULL,
+#       last_modification_utc_date_time timestamp,
+#       last_modification_user_id       integer,
+#       password_hash                   varchar(300) NOT NULL,
+#       must_change                     boolean NOT NULL DEFAULT false,
+#       failed_attempts                 integer NOT NULL DEFAULT 0,
+#       locked_until_utc                timestamp,
+#       last_login_utc                  timestamp,
+#       is_enabled                      boolean NOT NULL DEFAULT true
+#   );
+#   CREATE UNIQUE INDEX ux_athletes_email_attivi ON athletes (lower(btrim(email)))
+#       WHERE is_deleted = FALSE AND email IS NOT NULL AND btrim(email) <> '';
+
+# Login. %s: email normalizzata (minuscola, senza spazi)
+LOGIN_BY_EMAIL_SQL = """
+SELECT
+    a.id                                            AS athlete_id,
+    btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
+    a.fin_code,
+    btrim(a.email)                                  AS email,
+    c.password_hash,
+    c.must_change,
+    c.failed_attempts,
+    c.is_enabled,
+    (c.locked_until_utc > (now() AT TIME ZONE 'utc')) AS bloccato,
+    (c.locked_until_utc AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS bloccato_fino
+FROM athletes a
+LEFT JOIN athlete_credentials c ON c.athlete_id = a.id
+WHERE a.is_deleted = FALSE
+  AND lower(btrim(a.email)) = %s
+LIMIT 1
+"""
+
+# Primo accesso: ci si riconosce con e-mail e data di nascita, che sono a
+# database per tutti. Il codice FIN no, sette tesserati non ce l'hanno.
+# %s: email normalizzata, data di nascita
+ATHLETE_BY_EMAIL_BIRTH_SQL = """
+SELECT a.id                                            AS athlete_id,
+       btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
+       a.fin_code,
+       (c.athlete_id IS NOT NULL)                      AS ha_password
+FROM athletes a
+LEFT JOIN athlete_credentials c ON c.athlete_id = a.id
+WHERE a.is_deleted = FALSE
+  AND lower(btrim(a.email)) = %s
+  AND a.birth_date = %s
+LIMIT 1
+"""
+
+# Crea o sostituisce la password. %s: athlete_id, user_id, hash, must_change,
+#                                    user_id (per la modifica)
+CREDENTIALS_UPSERT_SQL = """
+INSERT INTO athlete_credentials (athlete_id, creation_user_id, password_hash,
+                                 must_change, is_enabled)
+VALUES (%s, %s, %s, %s, TRUE)
+ON CONFLICT (athlete_id) DO UPDATE SET
+    password_hash                   = EXCLUDED.password_hash,
+    must_change                     = EXCLUDED.must_change,
+    is_enabled                      = TRUE,
+    failed_attempts                 = 0,
+    locked_until_utc                = NULL,
+    last_modification_utc_date_time = (now() AT TIME ZONE 'utc'),
+    last_modification_user_id       = %s
+"""
+
+# %s: athlete_id
+CREDENTIALS_OK_SQL = """
+UPDATE athlete_credentials
+   SET failed_attempts  = 0,
+       locked_until_utc = NULL,
+       last_login_utc   = (now() AT TIME ZONE 'utc')
+ WHERE athlete_id = %s
+"""
+
+# Tentativo sbagliato: conta e, superata la soglia, blocca per qualche minuto.
+# %s: soglia, minuti, athlete_id
+CREDENTIALS_FAIL_SQL = """
+UPDATE athlete_credentials
+   SET failed_attempts  = failed_attempts + 1,
+       locked_until_utc = CASE WHEN failed_attempts + 1 >= %s
+                               THEN (now() AT TIME ZONE 'utc') + make_interval(mins => %s)
+                               ELSE locked_until_utc END
+ WHERE athlete_id = %s
+RETURNING failed_attempts,
+          (locked_until_utc AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS bloccato_fino
+"""
+
+# %s: athlete_id
+CREDENTIALS_DELETE_SQL = "DELETE FROM athlete_credentials WHERE athlete_id = %s"
+
+# %s: is_enabled, user_id, athlete_id
+CREDENTIALS_ENABLE_SQL = """
+UPDATE athlete_credentials
+   SET is_enabled                      = %s,
+       failed_attempts                 = 0,
+       locked_until_utc                = NULL,
+       last_modification_utc_date_time = (now() AT TIME ZONE 'utc'),
+       last_modification_user_id       = %s
+ WHERE athlete_id = %s
+"""
+
+# Stato per l'anagrafica. %s: athlete_id
+CREDENTIALS_STATE_SQL = """
+SELECT c.athlete_id, c.must_change, c.failed_attempts, c.is_enabled,
+       (c.locked_until_utc > (now() AT TIME ZONE 'utc'))                  AS bloccato,
+       (c.locked_until_utc AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS bloccato_fino,
+       (c.last_login_utc   AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS ultimo_accesso,
+       (c.creation_utc_date_time AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Rome') AS creata_il
+FROM athlete_credentials c
+WHERE c.athlete_id = %s
+"""
+
+# Quante credenziali attive ci sono, per il riepilogo in Gestione.
+CREDENTIALS_COUNT_SQL = """
+SELECT count(*)                                  AS con_password,
+       count(*) FILTER (WHERE is_enabled)        AS abilitate,
+       count(*) FILTER (WHERE must_change)       AS da_cambiare
+FROM athlete_credentials
+"""

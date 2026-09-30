@@ -71,6 +71,8 @@ if auth.is_admin():
     PAGINE["manifestazioni"] = st.Page("views/manifestazioni.py",
                                        title="Anagrafica manifestazioni",
                                        url_path="anagrafica-manifestazioni")
+    PAGINE["accessi"] = st.Page("views/accessi.py", title="Registro accessi",
+                                url_path="registro-accessi")
 
 # Voci della barra: (chiave pagina, emoji, etichetta, pagine che la accendono)
 VOCI = [
@@ -81,7 +83,7 @@ VOCI = [
 ]
 if auth.is_admin():
     VOCI.append(("gestione", "🛠️", "Gestione",
-                 {"gestione", "atleti", "manifestazioni"}))
+                 {"gestione", "atleti", "manifestazioni", "accessi"}))
 
 nav = st.navigation(list(PAGINE.values()), position="hidden")
 
