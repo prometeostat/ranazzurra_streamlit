@@ -503,6 +503,27 @@ a.meet-link:hover .meet-card {
 .cl-meta a { color:var(--sky); text-decoration:none; }
 .cl-meta a:hover { text-decoration:underline; }
 
+/* ── Manifestazione, gara per gara ──
+   Niente tabella: su un telefono quattro colonne finiscono fuori schermo.
+   Ogni iscritto e' una riga flessibile, con posizione e nome a sinistra e
+   tempo e punti a destra. */
+.mf-row { display:flex; align-items:center; gap:10px; padding:7px 6px;
+          border-bottom:1px solid var(--hairline); }
+.mf-row:last-child { border-bottom:none; }
+.mf-mio  { background:rgba(0,194,199,0.08); border-radius:8px; }
+.mf-pos  { flex:0 0 22px; text-align:right; color:var(--muted);
+           font-family:'Barlow Condensed',sans-serif; font-size:13px; }
+.mf-chi  { flex:1 1 auto; min-width:0; }
+.mf-nome { font-family:'Barlow Condensed',sans-serif; font-size:15px;
+           font-weight:600; color:var(--white); line-height:1.2;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mf-dx   { flex:0 0 auto; text-align:right; }
+.mf-tempo { font-family:'Barlow Condensed',sans-serif; font-size:16px;
+            font-weight:600; color:var(--teal); line-height:1.1;
+            white-space:nowrap; }
+.mf-punti { font-family:'Barlow Condensed',sans-serif; font-size:11px;
+            color:var(--muted); letter-spacing:0.5px; white-space:nowrap; }
+
 /* ── Confronto testa a testa ──
    Tre colonne: tempo di uno, distacco, tempo dell'altro. Sotto a ogni tempo
    data, punteggio FIN e manifestazione. Il piu' veloce sta dentro una

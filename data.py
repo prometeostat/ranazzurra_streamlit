@@ -14,7 +14,7 @@ import streamlit as st
 import season as season_mod
 from db import query_df
 from queries import (
-    ACCESS_LOG_SQL, ACCESS_LOG_STATS_SQL,
+    ACCESS_LOG_SQL, ACCESS_LOG_STATS_SQL, COMPETITION_RESULTS_SQL,
     AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
     FIN_LEADERBOARD_SQL, FREQUENCY_SQL, PB_SQL, RACES_SQL, RANKING_SQL,
     SEASONS_SQL, SEASON_META_SQL, SPLITS_BY_EVENT_SQL, SPLITS_SQL, TREND_SQL,
@@ -237,6 +237,18 @@ def load_fin_leaderboard(season_year: int) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════
 # Agenda manifestazioni
 # ══════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def load_competition_results(comp_id: int) -> pd.DataFrame:
+    """Gare, iscritti e tempi dei nostri in una manifestazione, gia' ordinati.
+
+    Dentro ci sono anche le staffette e gli iscritti senza tempo: l'ordine
+    arriva dalla query, qui si convertono solo i numeri.
+    """
+    df = query_df(COMPETITION_RESULTS_SQL, (int(comp_id),))
+    return _num(df, ("pool_length", "athlete_id", "birth_year", "time_sec",
+                     "fin_score", "dist_num"))
+
 
 @st.cache_data(ttl=TTL, show_spinner=False)
 def load_agenda(season_year: int) -> pd.DataFrame:

@@ -33,6 +33,7 @@ SELECT
 FROM athletes a
 LEFT JOIN companies co_s ON co_s.id = a.company_id AND co_s.is_deleted = FALSE
 WHERE a.is_deleted = FALSE
+  AND a.is_athlete = TRUE
   AND EXISTS (
     SELECT 1 FROM athlete_races ar
     JOIN races r        ON r.id  = ar.race_id        AND r.is_deleted  = FALSE
@@ -61,9 +62,11 @@ SELECT
     (%s - EXTRACT(YEAR FROM a.birth_date)::int) / 5 * 5 AS master_cat,
     a.fin_code,
     btrim(co_s.name)                            AS team,
-    a.is_deleted
+    a.is_deleted,
+    a.is_staff
 FROM athletes a
 LEFT JOIN companies co_s ON co_s.id = a.company_id AND co_s.is_deleted = FALSE
+WHERE a.is_athlete = TRUE
 ORDER BY btrim(a.last_name), btrim(a.first_name)
 """
 
@@ -498,6 +501,8 @@ SELECT
     a.birth_date,
     a.email,
     a.is_deleted,
+    a.is_athlete,
+    a.is_staff,
     a.company_id,
     btrim(co_s.name)            AS team,
     (SELECT COUNT(*) FROM athlete_races ar
@@ -511,8 +516,8 @@ ORDER BY btrim(a.last_name), btrim(a.first_name)
 ATHLETE_INSERT_SQL = """
 INSERT INTO athletes
     (fin_code, first_name, last_name, sex, birth_date, email,
-     company_id, creation_user_id, is_deleted)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+     company_id, creation_user_id, is_deleted, is_athlete, is_staff)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, %s)
 RETURNING id
 """
 
@@ -525,6 +530,8 @@ UPDATE athletes SET
     sex        = %s,
     birth_date = %s,
     email      = %s,
+    is_athlete = %s,
+    is_staff   = %s,
     last_modification_user_id = %s,
     last_modification_utc_date_time = (now() AT TIME ZONE 'utc')
 WHERE id = %s
@@ -764,6 +771,8 @@ SELECT
     btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
     a.fin_code,
     btrim(a.email)                                  AS email,
+    a.is_staff,
+    a.is_athlete,
     c.password_hash,
     c.must_change,
     c.failed_attempts,
@@ -784,6 +793,7 @@ ATHLETE_BY_EMAIL_BIRTH_SQL = """
 SELECT a.id                                            AS athlete_id,
        btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
        a.fin_code,
+       a.is_staff,
        (c.athlete_id IS NOT NULL)                      AS ha_password
 FROM athletes a
 LEFT JOIN athlete_credentials c ON c.athlete_id = a.id
@@ -862,4 +872,48 @@ SELECT count(*)                                  AS con_password,
        count(*) FILTER (WHERE is_enabled)        AS abilitate,
        count(*) FILTER (WHERE must_change)       AS da_cambiare
 FROM athlete_credentials
+"""
+
+
+# ══════════════════════════════════════════════════════════════════
+# Risultati di una manifestazione
+# ══════════════════════════════════════════════════════════════════
+
+# Tutte le nostre gare di una manifestazione, con gli iscritti e i tempi.
+# Ci sono anche le staffette (una riga per frazionista, tutte con il tempo
+# della squadra) e gli iscritti senza tempo, che in un elenco di gara sono
+# un'informazione: squalificato, ritirato o non partito.
+# L'ordine: prima le individuali, poi le staffette; dentro ogni gruppo per
+# stile e distanza, e dentro la gara dal tempo migliore. La distanza va
+# ordinata a numero, ma "4x50" non e' un numero: il CASE tiene separati i
+# due casi, cosi' il cast non vede mai una stringa con la x.
+# %s: comp_id
+COMPETITION_RESULTS_SQL = """
+SELECT
+    s.name                                           AS stroke,
+    d.type                                           AS distance,
+    re.is_relay,
+    CASE WHEN d.type ~ '^[0-9]+$' THEN (d.type)::int
+         WHEN d.type ~ '^[0-9]+x[0-9]+$' THEN (split_part(d.type, 'x', 2))::int
+         ELSE 999999 END                             AS dist_num,
+    r.pool_length,
+    a.id                                             AS athlete_id,
+    btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
+    CASE WHEN a.sex THEN 'M' ELSE 'F' END            AS sex,
+    EXTRACT(YEAR FROM a.birth_date)::int             AS birth_year,
+    EXTRACT(EPOCH FROM ar.final_time)::float         AS time_sec,
+    ar.fin_score,
+    co.start_date                                    AS comp_date
+FROM athlete_races ar
+JOIN races        r  ON r.id  = ar.race_id        AND r.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
+JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
+JOIN distances    d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
+JOIN athletes     a  ON a.id  = ar.athlete_id
+WHERE r.competition_id = %s
+  AND ar.is_deleted   = FALSE
+ORDER BY re.is_relay, s.name, dist_num, r.pool_length,
+         EXTRACT(EPOCH FROM ar.final_time) NULLS LAST,
+         btrim(a.last_name), btrim(a.first_name)
 """

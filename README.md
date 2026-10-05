@@ -22,7 +22,7 @@ ranazzurra_streamlit/
 ├── static/             manifest.json e icone (servite da /app/static/)
 ├── views/
 │   ├── agenda.py       calendario manifestazioni, passate e future
-│   ├── cerca.py        indice: scheda atleta e classifiche
+│   ├── cerca.py        indice: atleta, classifiche, widget manifestazioni
 │   ├── scheda.py       selettore atleta, riepilogo, ultime gare, elenco tempi
 │   ├── confronto.py    due atleti testa a testa, gare in comune
 │   ├── accessi.py      registro accessi, solo admin
@@ -76,6 +76,22 @@ non ce l'hanno), per questo la verifica passa di li'.
 L'amministratore puo' anche generare una **password temporanea** dalla scheda
 di un atleta in Anagrafica: si vede una volta sola, si consegna a voce, e al
 primo ingresso l'app obbliga a sostituirla.
+
+### Allenatori e staff
+
+Chi allena ma non gareggia entra come tutti gli altri, perche' anche lui sta
+in anagrafica: si crea la sua riga con nome, e-mail e data di nascita, si
+lascia vuoto il codice FIN e si spunta **Allenatore o staff** togliendo la
+spunta ad **Atleta**. Da quel momento fa il primo accesso con e-mail e data
+di nascita come chiunque, ma non compare nei selettori atleta, nelle
+classifiche e nei conteggi dei tesserati.
+
+Chi fa tutti e due i ruoli tiene entrambe le spunte: e' un atleta a tutti gli
+effetti, compare ovunque, e in piu' ha il ruolo di allenatore.
+
+Il flag `is_staff` vale come ruolo *allenatore* senza bisogno di toccare i
+secrets. L'amministratore invece resta una cosa dei secrets: e' un permesso
+piu' pesante e non si da' con una spunta in anagrafica.
 
 ### Come sono tenute le password
 
@@ -148,9 +164,10 @@ sviluppare senza login, dove l'ospite e' amministratore per definizione.
 
 ### Ruoli
 
-Admin e allenatori vedono la sezione Gestione, tutti gli altri no. Si
-indicano in `[app]` nei secrets, in tre modi alternativi, e vale il primo che
-corrisponde:
+L'amministratore si indica in `[app]` nei secrets, in tre modi alternativi, e
+vale il primo che corrisponde. L'allenatore si puo' indicare allo stesso modo
+oppure, molto piu' comodo, con la spunta *Allenatore o staff* in anagrafica
+(`athletes.is_staff`), che non richiede di rimettere mano ai secrets:
 
 ```toml
 admin_athlete_ids = [52]        # athletes.id, il piu' stabile
@@ -302,6 +319,52 @@ si vuole marcarli nell'elenco.
 
 ---
 
+## Manifestazioni (dentro Cerca)
+
+Sotto alle due porte d'ingresso di Cerca c'e' il widget **Manifestazioni**:
+si sceglie una manifestazione dal menu a tendina e sotto compare gara per
+gara chi c'era, con tempo e punteggio FIN. Ha preso il posto del blocco
+"Ultime manifestazioni", che mostrava solo le ultime quattro schede senza
+poterci entrare dentro.
+
+Nel menu finiscono solo le manifestazioni **del periodo scelto in cui
+abbiamo gareggiato** (`nostre_gare > 0`), dalla piu' recente; il filtro
+Periodo e' lo stesso delle altre pagine, quindi con "tutte le stagioni" c'e'
+dentro tutto lo storico. La testata ripete data, organizzatore, vasca e
+quante gare e quanti atleti nostri, con il nome che porta ai risultati
+ufficiali (`pdf_link`, con `website_link` come riserva).
+
+La query e' `COMPETITION_RESULTS_SQL` e, a differenza del resto dell'app,
+**non filtra niente**:
+
+- ci sono **le staffette**, con il tempo della squadra ripetuto su ogni
+  frazionista (a database e' cosi': una riga per frazionista, stesso tempo,
+  punteggio FIN nullo). Le frazioni non si numerano, sarebbe una classifica
+  finta;
+- ci sono **gli iscritti senza tempo**: non partiti, ritirati o squalificati.
+  Restano in fondo alla gara, senza posizione, con un trattino al posto del
+  tempo. Sono 136 righe su 7.642, poche ma sono informazione.
+
+L'ordine arriva tutto dalla query: prima le individuali, poi le staffette,
+dentro ogni gruppo per stile e distanza e dentro la gara dal tempo migliore.
+La distanza va ordinata a numero, ma le staffette si chiamano `4x50` e
+`8x25`: il `CASE` tiene separati i due casi, cosi' il cast a intero non vede
+mai una stringa con la x.
+
+La categoria accanto al nome e' quella **della stagione in cui si e' nuotato
+quel tempo**, come nelle classifiche: la stagione si ricava dalla data della
+manifestazione (da settembre in poi e' quella nuova). Sotto i vent'anni non
+esistono fasce FIN e l'etichetta diventa *Giov. M* o *Giov. F*: in gare come
+il circuito Aquasport maschi e femmine nuotano insieme, e senza il sesso non
+si capirebbe chi e' chi.
+
+Le righe non sono una tabella ma dei flex (`.mf-row` in `theme.py`): su un
+telefono quattro colonne finivano fuori schermo, cosi' invece nome e
+categoria stanno a sinistra, tempo e punti a destra. La riga di chi e'
+collegato e' accesa, come nelle classifiche.
+
+---
+
 ## Registro accessi
 
 Ogni accesso, uscita e tentativo fallito finisce nella tabella `access_log`
@@ -383,8 +446,9 @@ Niente barra laterale: e' nascosta via CSS e `st.navigation` gira con
 una **barra fissa in basso**, come in un'app: Agenda, Confronta, Cerca,
 Profilo e, solo per l'amministratore, Gestione.
 
-Cerca e Gestione sono pagine-indice: la prima porta ad Atleta e Classifiche,
-la seconda alle due anagrafiche. La voce della barra resta accesa anche
+Cerca e Gestione sono pagine-indice: la prima porta ad Atleta e Classifiche
+e si tiene in casa il widget Manifestazioni, la seconda porta alle due
+anagrafiche e al registro accessi. La voce della barra resta accesa anche
 quando sei in una sottopagina.
 
 Le voci sono schede cliccabili per intero, senza un bottone "Apri" a parte:
@@ -475,6 +539,20 @@ risultati collegati restano a database e tornano appena la riattivi. Il form
 controlla che la fine non preceda l'inizio, che le iscrizioni non chiudano
 dopo la partenza e che i link comincino per http.
 
+
+Nel form ci sono due spunte che decidono cosa e' quella persona. **Atleta**
+la fa comparire nei selettori, nelle classifiche e nei conteggi, ed e' spuntata
+di default. **Allenatore o staff** le da' il ruolo di allenatore e le permette
+di entrare nell'app. Le combinazioni valide sono tre: solo atleta, il caso
+normale; solo allenatore, e allora l'e-mail diventa obbligatoria perche' e'
+l'unico modo che ha per entrare; tutti e due, per l'allenatore che gareggia
+anche lui, che resta visibile ovunque come qualsiasi altro atleta. Nessuna
+delle due spuntate non si salva.
+
+A database sono due colonne aggiunte ad `athletes`, `is_athlete` con default
+`true` e `is_staff` con default `false`, quindi le 268 righe gia' presenti
+continuano a comportarsi esattamente come prima. L'elenco ha un filtro per
+ruolo e una colonna che dice chi e' cosa.
 
 Sotto alle azioni c'e' il riquadro **Accesso all'app**: stato della password
 dell'atleta selezionato, data dell'ultimo accesso e i tre bottoni per
