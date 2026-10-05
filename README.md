@@ -22,11 +22,12 @@ ranazzurra_streamlit/
 ├── static/             manifest.json e icone (servite da /app/static/)
 ├── views/
 │   ├── agenda.py       calendario manifestazioni, passate e future
-│   ├── cerca.py        indice: atleta, classifiche, widget manifestazioni
+│   ├── cerca.py        indice: atleta, classifiche, manifestazioni
 │   ├── scheda.py       selettore atleta, riepilogo, ultime gare, elenco tempi
 │   ├── confronto.py    due atleti testa a testa, gare in comune
 │   ├── accessi.py      registro accessi, solo admin
 │   ├── classifiche.py  top 5 per specialita', filtro categoria, M e F divisi
+│   ├── risultati.py    una manifestazione, gara per gara, con gli iscritti
 │   ├── profilo.py      account, preferiti, tema, installazione
 │   ├── gestione.py     indice delle anagrafiche (solo admin)
 │   ├── anagrafica.py   anagrafica atleti (solo admin)
@@ -57,6 +58,18 @@ Se manca `secrets.toml` l'app non crasha piu': mostra un messaggio che dice
 cosa creare. In alternativa ai secrets si possono usare le variabili
 d'ambiente `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, oppure
 `DATABASE_URL`.
+
+Lo stesso messaggio, pero', esce anche quando `secrets.toml` c'e' ma **non
+e' TOML valido**: Streamlit non legge mezzo file, o lo capisce tutto o
+niente, quindi un errore di sintassi nella sezione `[app]` fa sparire anche
+`[postgres]`. L'inciampo tipico e' una lista di stringhe senza virgolette,
+`admin_emails = [mario@rossi.it]` invece di `["mario@rossi.it"]`: gli id e i
+codici FIN sono numeri e vanno nudi, le email sono stringhe e vanno fra
+virgolette. Per controllare al volo, dalla cartella del progetto:
+
+```bash
+python -c "import tomllib; tomllib.load(open('.streamlit/secrets.toml','rb')); print('ok')"
+```
 
 ---
 
@@ -319,13 +332,21 @@ si vuole marcarli nell'elenco.
 
 ---
 
-## Manifestazioni (dentro Cerca)
+## Manifestazioni
 
-Sotto alle due porte d'ingresso di Cerca c'e' il widget **Manifestazioni**:
-si sceglie una manifestazione dal menu a tendina e sotto compare gara per
-gara chi c'era, con tempo e punteggio FIN. Ha preso il posto del blocco
-"Ultime manifestazioni", che mostrava solo le ultime quattro schede senza
-poterci entrare dentro.
+Terza porta di Cerca, accanto ad Atleta e Classifiche, e pagina sua
+(`views/risultati.py`, url `/manifestazioni`). Ha preso il posto del blocco
+"Ultime manifestazioni", che mostrava quattro schede senza poterci entrare
+dentro.
+
+Si procede in tre passi: si sceglie il **Periodo**, si sceglie la
+**Manifestazione**, si preme **Visualizza** e sotto compare gara per gara
+chi c'era, con tempo e punteggio FIN. Il bottone non e' un vezzo: con
+"tutte le stagioni" nel menu ci sono centinaia di manifestazioni e ognuna
+costa una query, quindi si scorre il menu senza che l'app parta a
+interrogare a ogni passaggio. La manifestazione mostrata resta in
+`mf_vista`; cambiando periodo o voce del menu la tabella sparisce, se no
+resterebbe appesa a una scelta che non e' piu' quella a video.
 
 Nel menu finiscono solo le manifestazioni **del periodo scelto in cui
 abbiamo gareggiato** (`nostre_gare > 0`), dalla piu' recente; il filtro
@@ -446,10 +467,9 @@ Niente barra laterale: e' nascosta via CSS e `st.navigation` gira con
 una **barra fissa in basso**, come in un'app: Agenda, Confronta, Cerca,
 Profilo e, solo per l'amministratore, Gestione.
 
-Cerca e Gestione sono pagine-indice: la prima porta ad Atleta e Classifiche
-e si tiene in casa il widget Manifestazioni, la seconda porta alle due
-anagrafiche e al registro accessi. La voce della barra resta accesa anche
-quando sei in una sottopagina.
+Cerca e Gestione sono pagine-indice: la prima porta ad Atleta, Classifiche e
+Manifestazioni, la seconda alle due anagrafiche e al registro accessi. La
+voce della barra resta accesa anche quando sei in una sottopagina.
 
 Le voci sono schede cliccabili per intero, senza un bottone "Apri" a parte:
 sono `st.button` con etichetta "icona, riga vuota, titolo, riga vuota,

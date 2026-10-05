@@ -61,6 +61,8 @@ PAGINE = {
                       url_path="scheda-atleta"),
     "classifiche": st.Page("views/classifiche.py", title="Classifiche",
                            url_path="classifiche"),
+    "risultati": st.Page("views/risultati.py", title="Manifestazioni",
+                         url_path="manifestazioni"),
     "profilo": st.Page("views/profilo.py", title="Profilo", url_path="profilo"),
 }
 if auth.is_admin():
@@ -78,7 +80,7 @@ if auth.is_admin():
 VOCI = [
     ("agenda", "📅", "Agenda", {"agenda"}),
     ("confronta", "⚖️", "Confronta", {"confronta"}),
-    ("cerca", "🔍", "Cerca", {"cerca", "scheda", "classifiche"}),
+    ("cerca", "🔍", "Cerca", {"cerca", "scheda", "classifiche", "risultati"}),
     ("profilo", "👤", "Profilo", {"profilo"}),
 ]
 if auth.is_admin():
