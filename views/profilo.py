@@ -110,9 +110,9 @@ if auth.modalita() == "password" and mio is not None:
                 if not errori:
                     st.success("Password cambiata. Vale dal prossimo accesso "
                                "su tutti i dispositivi.")
-        st.caption("Se non ricordi quella attuale, chiedi in segreteria di "
-                   "azzerarla: poi rifai il primo accesso con e-mail e data "
-                   "di nascita.")
+        st.caption("Se non ricordi quella attuale, chiedi all'amministratore "
+                   "di azzerarla: poi rifai il primo accesso con e-mail e "
+                   "data di nascita.")
 
 with st.expander("Installa l'app sul telefono"):
     st.markdown(
@@ -120,21 +120,6 @@ with st.expander("Installa l'app sul telefono"):
         "**Android**: menu di Chrome, Aggiungi a schermata Home.  \n\n"
         "Si apre a schermo intero come un'app. Serve la connessione: i dati "
         "arrivano dal database in tempo reale.")
-
-with st.expander("Diagnostica accesso"):
-    d = auth.diagnostica()
-    st.caption(
-        f"Modalita' di accesso: **{d['modalita']}**  \n"
-        f"Blocco `[app]` nei secrets: **{'letto' if d['secrets_app'] else 'assente'}**  \n"
-        f"Amministratori configurati: **{d['admin_configurati']}**  \n"
-        f"Il tuo id atleta: **{d['athlete_id']}** · codice FIN: **{d['fin_code']}**  \n"
-        f"Ruolo calcolato adesso: **{d['ruolo']}** "
-        f"(per id: {'si' if d['io_sono_admin_per_id'] else 'no'}, "
-        f"per codice FIN: {'si' if d['io_sono_admin_per_fin'] else 'no'})"
-    )
-    st.caption("Se qui manca l'amministratore ma in locale c'e', quasi sempre "
-               "e' perche' il blocco `[app]` dei secrets non e' stato incollato "
-               "nell'ambiente dove gira l'app.")
 
 st.markdown("---")
 if st.button("Esci", use_container_width=True):

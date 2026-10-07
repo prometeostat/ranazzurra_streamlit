@@ -24,8 +24,9 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      ATHLETE_INSERT_SQL, ATHLETE_REACTIVATE_SQL,
                      ATHLETE_UPDATE_SQL, ATHLETES_ADMIN_SQL, COMPANIES_SQL,
                      COMPETITION_DEACTIVATE_SQL, COMPETITION_INSERT_SQL,
-                     COMPETITION_REACTIVATE_SQL, COMPETITION_UPDATE_SQL,
-                     COMPETITIONS_ADMIN_SQL, TIMINGS_SQL)
+                     COMPETITION_RACES_SQL, COMPETITION_REACTIVATE_SQL,
+                     COMPETITION_UPDATE_SQL, COMPETITIONS_ADMIN_SQL,
+                     RACE_EVENTS_SQL, RACE_INSERT_SQL, TIMINGS_SQL)
 
 MAX_NOME = 50        # varchar(50) su first_name, last_name ed email
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
@@ -101,6 +102,13 @@ def valida(dati: dict, athlete_id: int = -1) -> list[str]:
     if nascita and nascita > _dt.date.today():
         errori.append("La data di nascita e' nel futuro.")
 
+    atleta = bool(dati.get("is_athlete", True))
+    staff = bool(dati.get("is_staff", False))
+    if not atleta and not staff:
+        errori.append("Serve almeno un ruolo: atleta, allenatore o tutti e due.")
+    if staff and not atleta and not email:
+        errori.append("Chi allena e basta entra solo con l'e-mail: e' obbligatoria.")
+
     fin = dati.get("fin_code")
     if fin is not None:
         altro = fin_occupato(fin, athlete_id)
@@ -126,12 +134,13 @@ def _pulisci(dati: dict) -> tuple:
 
 
 def crea_atleta(dati: dict) -> int:
-    """Inserisce un atleta attivo e restituisce il nuovo id."""
+    """Inserisce una persona attiva in anagrafica e restituisce il nuovo id."""
     fin, nome, cognome, sesso, nascita, email = _pulisci(dati)
     riga = execute(
         ATHLETE_INSERT_SQL,
         (fin, nome, cognome, sesso, nascita, email,
-         dati.get("company_id"), _user_id()),
+         dati.get("company_id"), _user_id(),
+         bool(dati.get("is_athlete", True)), bool(dati.get("is_staff", False))),
         returning=True,
     )
     _svuota_cache()
@@ -142,6 +151,8 @@ def aggiorna_atleta(athlete_id: int, dati: dict) -> int:
     fin, nome, cognome, sesso, nascita, email = _pulisci(dati)
     n = execute(ATHLETE_UPDATE_SQL,
                 (fin, nome, cognome, sesso, nascita, email,
+                 bool(dati.get("is_athlete", True)),
+                 bool(dati.get("is_staff", False)),
                  _user_id(), int(athlete_id)))
     _svuota_cache()
     return n
@@ -171,7 +182,8 @@ MAX_LINK = 500           # website_link e pdf_link sono varchar(500)
 def elenco_manifestazioni() -> pd.DataFrame:
     """Anagrafica manifestazioni, comprese le disattivate."""
     df = query_df(COMPETITIONS_ADMIN_SQL)
-    for c in ("comp_id", "max_races_per_athlete", "n_gare"):
+    for c in ("comp_id", "max_races_per_athlete", "organizer_company_id",
+              "n_gare"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
@@ -232,6 +244,7 @@ def _pulisci_manifestazione(dati: dict) -> tuple:
         testo("website_link", MAX_LINK),
         testo("pdf_link", MAX_LINK),
         int(massimo) if massimo else None,
+        _intero(dati.get("organizer_company_id")),
     )
 
 
@@ -259,6 +272,92 @@ def riattiva_manifestazione(comp_id: int) -> int:
     n = execute(COMPETITION_REACTIVATE_SQL, (_user_id(), int(comp_id)))
     _svuota_cache()
     return n
+
+
+# ══════════════════════════════════════════════════════════════════
+# Clonazione di una manifestazione
+# ══════════════════════════════════════════════════════════════════
+MAX_NOME_RACE = 200      # races.name e' varchar senza limite: cappello di buonsenso
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def gare_di_manifestazione(comp_id: int) -> pd.DataFrame:
+    """Le gare attive di una manifestazione, in ordine di inserimento."""
+    df = query_df(COMPETITION_RACES_SQL, (int(comp_id),))
+    for c in ("race_id", "pool_length", "race_event_id"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def elenco_eventi_gara() -> pd.DataFrame:
+    """Tipi di gara a lookup: id e etichetta leggibile."""
+    df = query_df(RACE_EVENTS_SQL)
+    if not df.empty:
+        df["id"] = pd.to_numeric(df["id"], errors="coerce")
+    return df
+
+
+def _intero(v) -> int | None:
+    """
+    Intero oppure None. Passa da pd.isna per primo: i valori che arrivano da
+    un data_editor con colonna Int64 sono pd.NA, e pd.NA dentro un confronto
+    come `v in (None, "")` solleverebbe TypeError invece di dire "vuoto".
+    """
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str) and not v.strip():
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _testo(v) -> str | None:
+    """Stringa pulita oppure None, con la stessa prudenza su pd.NA."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip()[:MAX_NOME_RACE] or None
+
+
+def crea_gara(comp_id: int, nome, vasca, race_event_id) -> int:
+    """Una gara dentro una manifestazione. Non svuota il cache da sola:
+    la clonazione ne crea molte di fila e lo svuota una volta alla fine."""
+    riga = execute(
+        RACE_INSERT_SQL,
+        (_testo(nome), _intero(vasca), int(comp_id),
+         _intero(race_event_id), _user_id()),
+        returning=True,
+    )
+    return int(riga["id"]) if riga else -1
+
+
+def clona_manifestazione(dati: dict, gare: list[dict]) -> tuple[int, int]:
+    """
+    Crea la manifestazione e ci riattacca le gare scelte.
+
+    Si copia solo la struttura: nessun risultato viene duplicato, perche' i
+    tempi appartengono all'edizione in cui sono stati nuotati. Restituisce
+    l'id nuovo e quante gare sono state create.
+    """
+    nuovo_id = crea_manifestazione(dati)
+    if nuovo_id < 0:
+        return -1, 0
+    fatte = 0
+    for g in gare:
+        if crea_gara(nuovo_id, g.get("nome"), g.get("pool_length"),
+                     g.get("race_event_id")) > 0:
+            fatte += 1
+    _svuota_cache()
+    return nuovo_id, fatte
 
 
 # ══════════════════════════════════════════════════════════════════

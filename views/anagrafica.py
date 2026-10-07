@@ -18,6 +18,7 @@ import crud
 from views._common import page_header
 
 STATI = ["Attivi", "Inattivi", "Tutti"]
+RUOLI = ["Tutti", "Atleti", "Allenatori e staff"]
 ORDINAMENTI = {
     "Cognome": "last_name",
     "Nome": "first_name",
@@ -100,6 +101,17 @@ def _form(atleta: dict | None) -> None:
         email = c6.text_input("E-Mail", value="" if nuovo else (atleta.get("email") or ""),
                               max_chars=crud.MAX_NOME)
 
+        c7, c8 = st.columns(2)
+        e_atleta = c7.checkbox(
+            "Atleta", value=True if nuovo else bool(atleta.get("is_athlete", True)),
+            help="Gareggia per la squadra: compare nei selettori, nelle "
+                 "classifiche e nei conteggi.")
+        e_staff = c8.checkbox(
+            "Allenatore o staff", value=False if nuovo else bool(atleta.get("is_staff", False)),
+            help="Puo' entrare nell'app con la sua e-mail. Chi allena e basta "
+                 "resta fuori dagli elenchi atleti; chi fa tutti e due i ruoli "
+                 "compare come tutti gli altri.")
+
         st.checkbox("Attivo", value=True if nuovo else (not atleta["is_deleted"]),
                     disabled=True,
                     help="Si cambia con i pulsanti Disattiva e Riattiva nell'elenco.")
@@ -126,6 +138,8 @@ def _form(atleta: dict | None) -> None:
         "sex": sesso == "Maschile",
         "birth_date": nascita,
         "email": email,
+        "is_athlete": bool(e_atleta),
+        "is_staff": bool(e_staff),
     }
     errori = crud.valida(dati, -1 if nuovo else int(atleta["athlete_id"]))
     if errori:
@@ -184,6 +198,7 @@ c_ord, c_verso = st.columns([2, 2])
 ordina = c_ord.selectbox("Ordina per", list(ORDINAMENTI), key="anag_ordina")
 verso = c_verso.radio("Verso", ["Crescente", "Decrescente"], horizontal=True,
                       key="anag_verso")
+ruolo = st.radio("Ruolo", RUOLI, horizontal=True, key="anag_ruolo")
 
 # ── Filtri ────────────────────────────────────────────────────────
 vista = atleti.copy()
@@ -191,6 +206,11 @@ if stato == "Attivi":
     vista = vista[vista["is_deleted"] == False]      # noqa: E712
 elif stato == "Inattivi":
     vista = vista[vista["is_deleted"] == True]       # noqa: E712
+
+if ruolo == "Atleti":
+    vista = vista[vista["is_athlete"].astype(bool)]
+elif ruolo == "Allenatori e staff":
+    vista = vista[vista["is_staff"].astype(bool)]
 
 if cerca.strip():
     k = cerca.strip().lower()
@@ -203,8 +223,11 @@ if cerca.strip():
 vista = vista.sort_values(ORDINAMENTI[ordina], ascending=(verso == "Crescente"),
                           na_position="last")
 
-st.caption(f"{len(vista)} atleti su {len(atleti)} in anagrafica "
-           f"({int((atleti['is_deleted'] == False).sum())} attivi).")  # noqa: E712
+_attivi = atleti[atleti["is_deleted"] == False]                       # noqa: E712
+st.caption(
+    f"{len(vista)} righe su {len(atleti)} in anagrafica · "
+    f"{int(_attivi['is_athlete'].astype(bool).sum())} atleti attivi · "
+    f"{int(_attivi['is_staff'].astype(bool).sum())} fra allenatori e staff.")
 
 if vista.empty:
     st.info("Nessun atleta con questi filtri.")
@@ -218,6 +241,10 @@ tabella = pd.DataFrame({
     "Sesso": vista["sex"].map({True: "M", False: "F"}),
     "Data di nascita": vista["birth_date"],
     "E-Mail": vista["email"],
+    "Ruolo": [("Atleta e allenatore" if a and s_ else
+               "Allenatore" if s_ else "Atleta")
+              for a, s_ in zip(vista["is_athlete"].astype(bool),
+                               vista["is_staff"].astype(bool))],
     "Attivo": ~vista["is_deleted"].astype(bool),
     "Gare": vista["n_gare"].astype("Int64"),
 })
@@ -281,10 +308,18 @@ st.markdown('<div class="section-title">Accesso all\'app</div>',
 mail_atleta = str(riga.get("email") or "").strip()
 stato = auth.stato_credenziali(int(scelto))
 
-if not mail_atleta:
+if inattivo:
+    st.warning("Questa persona e' disattivata in anagrafica, quindi non puo' "
+               "entrare ne' fare il primo accesso: il login cerca solo fra gli "
+               "attivi. Se deve usare l'app, riattivala con il pulsante qui "
+               "sopra.")
+elif not mail_atleta:
     st.warning("Questo tesserato non ha un'e-mail in anagrafica, quindi non "
                "puo' entrare: l'indirizzo e' il nome utente. Aggiungilo con "
                "Modifica.")
+elif riga.get("birth_date") is None or pd.isna(riga.get("birth_date")):
+    st.warning("Manca la data di nascita: serve per il primo accesso, senza "
+               "quella non riesce ad attivarsi.")
 elif not stato:
     st.info(f"Nessuna password impostata. {riga['first_name']} puo' attivarsi "
             f"da solo dalla scheda **Primo accesso**, con {mail_atleta} e la "

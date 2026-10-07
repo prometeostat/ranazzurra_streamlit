@@ -627,25 +627,29 @@ SELECT
     co.website_link,
     co.pdf_link,
     co.max_races_per_athlete,
+    co.organizer_company_id,
+    btrim(org.name)             AS organizzatore,
     co.is_deleted,
     (SELECT COUNT(*) FROM races r
       WHERE r.competition_id = co.id AND r.is_deleted = FALSE) AS n_gare
 FROM competitions co
+LEFT JOIN companies org ON org.id = co.organizer_company_id
 ORDER BY co.start_date DESC
 """
 
-# %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare, user_id
+# %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
+#     organizzatore, user_id
 COMPETITION_INSERT_SQL = """
 INSERT INTO competitions
     ("type", start_date, end_date, open_registration_date,
      close_registration_date, timing, website_link, pdf_link,
-     max_races_per_athlete, creation_user_id, is_deleted)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+     max_races_per_athlete, organizer_company_id, creation_user_id, is_deleted)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
 RETURNING id
 """
 
 # %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
-#     user_id, comp_id
+#     organizzatore, user_id, comp_id
 COMPETITION_UPDATE_SQL = """
 UPDATE competitions SET
     "type"                  = %s,
@@ -657,6 +661,7 @@ UPDATE competitions SET
     website_link            = %s,
     pdf_link                = %s,
     max_races_per_athlete   = %s,
+    organizer_company_id    = %s,
     last_modification_user_id = %s
 WHERE id = %s
 """
@@ -679,6 +684,56 @@ SELECT DISTINCT btrim(timing) AS timing
 FROM competitions
 WHERE timing IS NOT NULL AND btrim(timing) <> ''
 ORDER BY 1
+"""
+
+# ── Clonazione ────────────────────────────────────────────────────
+# Le gare attive di una manifestazione, con l'etichetta leggibile del tipo
+# di gara: e' l'elenco che si copia quando si clona un'edizione passata.
+# %s: comp_id
+COMPETITION_RACES_SQL = """
+SELECT
+    r.id                AS race_id,
+    r.name              AS nome,
+    r.pool_length,
+    r.race_event_id,
+    (CASE WHEN re.is_relay THEN 'Staffetta ' ELSE '' END)
+        || d.type || ' ' || s.name              AS evento
+FROM races r
+LEFT JOIN race_events re ON re.id = r.race_event_id
+LEFT JOIN strokes     s  ON s.id  = re.stroke_id
+LEFT JOIN distances   d  ON d.id  = re.distance_id
+WHERE r.competition_id = %s
+  AND r.is_deleted = FALSE
+ORDER BY r.id
+"""
+
+# Tipi di gara disponibili, per la tendina dell'editor di clonazione.
+# L'ordine numerico si ricava dalle cifre: le distanze delle staffette sono
+# scritte "4x50", quindi un CAST diretto a int fallirebbe.
+RACE_EVENTS_SQL = """
+SELECT
+    re.id,
+    (CASE WHEN re.is_relay THEN 'Staffetta ' ELSE '' END)
+        || d.type || ' ' || s.name              AS evento
+FROM race_events re
+JOIN strokes   s ON s.id = re.stroke_id   AND s.is_deleted = FALSE
+JOIN distances d ON d.id = re.distance_id AND d.is_deleted = FALSE
+WHERE re.is_deleted = FALSE
+ORDER BY re.is_relay,
+         s.name,
+         NULLIF(regexp_replace(d.type, '[^0-9]', '', 'g'), '')::int NULLS LAST,
+         re.id
+"""
+
+# Una gara nuova dentro una manifestazione. races non ha
+# last_modification_user_id: c'e' solo creation_user_id, ed e' NOT NULL.
+# %s: nome, pool_length, competition_id, race_event_id, user_id
+RACE_INSERT_SQL = """
+INSERT INTO races
+    (name, pool_length, competition_id, race_event_id,
+     creation_user_id, is_deleted)
+VALUES (%s, %s, %s, %s, %s, FALSE)
+RETURNING id
 """
 
 

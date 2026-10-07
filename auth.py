@@ -97,7 +97,8 @@ def _ints(cfg: dict, key: str) -> set[int]:
     return out
 
 
-def _role_for(athlete_id: int | None, fin_code, email: str | None) -> str:
+def _role_for(athlete_id: int | None, fin_code, email: str | None,
+              staff: bool = False) -> str:
     """
     Ruolo dell'utente, deciso dai secrets. Tre chiavi possibili per ciascun
     ruolo, si puo' usare quella che torna piu' comoda:
@@ -108,7 +109,9 @@ def _role_for(athlete_id: int | None, fin_code, email: str | None) -> str:
                                         perche' in modalita' "code" l'email
                                         non viene mai chiesta
 
-    Stesse chiavi con prefisso coach_ per gli allenatori.
+    Stesse chiavi con prefisso coach_ per gli allenatori. In piu', chi in
+    anagrafica ha is_staff = TRUE e' allenatore senza bisogno dei secrets:
+    quel flag lo mette l'amministratore dall'Anagrafica atleti.
     """
     cfg = _app_cfg()
     mail = (email or "").lower()
@@ -126,7 +129,8 @@ def _role_for(athlete_id: int | None, fin_code, email: str | None) -> str:
 
     if (aid in _ints(cfg, "coach_athlete_ids")
             or (fin is not None and fin in _ints(cfg, "coach_fin_codes"))
-            or (mail and mail in coaches_mail)):
+            or (mail and mail in coaches_mail)
+            or bool(staff)):
         return "allenatore"
 
     return "atleta"
@@ -398,7 +402,7 @@ def _athlete_by_email(email: str) -> dict | None:
 def _athlete_by_id(athlete_id: int) -> dict | None:
     df = query_df(
         "SELECT a.id AS athlete_id, btrim(a.last_name)||' '||btrim(a.first_name) AS full_name, "
-        "a.fin_code FROM athletes a WHERE a.id = %s AND a.is_deleted = FALSE",
+        "a.fin_code, a.is_staff FROM athletes a WHERE a.id = %s AND a.is_deleted = FALSE",
         (athlete_id,),
     )
     if df.empty:
@@ -408,12 +412,15 @@ def _athlete_by_id(athlete_id: int) -> dict | None:
 
 def _login_user(rec: dict, email: str | None = None, remember: bool = False,
                 via: str = "code") -> None:
+    staff = bool(rec.get("is_staff") or False)
     user = {
         "athlete_id": int(rec["athlete_id"]),
         "full_name": rec["full_name"],
         "fin_code": rec.get("fin_code"),
         "email": email,
-        "role": _role_for(int(rec["athlete_id"]), rec.get("fin_code"), email),
+        "is_staff": staff,
+        "role": _role_for(int(rec["athlete_id"]), rec.get("fin_code"), email,
+                          staff),
     }
     st.session_state[SESSION_KEY] = user
     if remember:
@@ -436,7 +443,7 @@ def current_user() -> dict | None:
     # l'ospite e' amministratore per definizione e resta com'e'.
     if _mode() != "open":
         u["role"] = _role_for(u.get("athlete_id"), u.get("fin_code"),
-                              u.get("email"))
+                              u.get("email"), u.get("is_staff", False))
     return u
 
 
@@ -586,8 +593,8 @@ def _code_gate() -> None:
             _login_user(rec, remember=remember)
             st.rerun()
 
-        st.caption("Non riesci a entrare? Scrivi in segreteria e facciamo controllare "
-                   "il codice FIN in anagrafica.")
+        st.caption("Non riesci a entrare? Contatta l'amministratore e facciamo "
+                   "controllare il codice FIN in anagrafica.")
 
 
 def _ora(v) -> str:
@@ -638,8 +645,8 @@ def _password_gate() -> None:
                 _attiva_accesso(email2, nato, p1, p2)
 
         st.caption("Password dimenticata, oppure e-mail non riconosciuta? "
-                   "Scrivi in segreteria: l'amministratore azzera la password "
-                   "e puoi rifare il primo accesso.")
+                   "Contatta l'amministratore che azzererà la password e "
+                   "potrai rifare il primo accesso.")
 
 
 def _tenta_accesso(email: str, password: str, remember: bool) -> None:
@@ -671,7 +678,8 @@ def _tenta_accesso(email: str, password: str, remember: bool) -> None:
     if not bool(r.get("is_enabled", True)):
         registra_accesso("FALLITO", id=aid, nome=r.get("full_name"),
                          nota="accesso sospeso")
-        st.error("L'accesso di questo account e' sospeso. Scrivi in segreteria.")
+        st.error("L'accesso di questo account e' sospeso. Contatta "
+                 "l'amministratore.")
         return
     if bool(r.get("bloccato")):
         registra_accesso("FALLITO", id=aid, nome=r.get("full_name"),
@@ -722,14 +730,14 @@ def _attiva_accesso(email: str, nato, p1: str, p2: str) -> None:
     if df.empty:
         registra_accesso("FALLITO", nota=f"attivazione fallita: {mail[:120]}")
         st.error("Questi dati non corrispondono a nessun tesserato. Controlla "
-                 "l'indirizzo e la data, oppure chiedi in segreteria di "
+                 "l'indirizzo e la data, oppure chiedi all'amministratore di "
                  "sistemare l'anagrafica.")
         return
 
     r = df.iloc[0].to_dict()
     if bool(r.get("ha_password")):
         st.warning("Questo account ha gia' una password. Se non la ricordi, "
-                   "chiedi in segreteria di azzerarla.")
+                   "chiedi all'amministratore di azzerarla.")
         return
 
     aid = int(r["athlete_id"])
@@ -782,7 +790,8 @@ def _oidc_gate() -> None:
             rec = _athlete_by_email(email)
             if rec is None:
                 st.error(f"L'indirizzo {email} non risulta in anagrafica atleti. "
-                         "Chiedi alla segreteria di associarlo al tuo tesseramento.")
+                         "Chiedi all'amministratore di associarlo al tuo "
+                         "tesseramento.")
                 if st.button("Esci"):
                     st.logout()
                 return

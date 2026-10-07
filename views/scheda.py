@@ -300,12 +300,23 @@ mesi = elenco["comp_date"].dt.month
 elenco["stagione"] = elenco["comp_date"].dt.year.where(
     mesi >= 9, elenco["comp_date"].dt.year - 1)
 
-# Il migliore di OGNI stagione, non il migliore assoluto: altrimenti con
-# "Tutte le stagioni" resterebbe una riga sola per combinazione e il badge PB
-# si accenderebbe su tutte, confrontando un tempo con se stesso.
 CHIAVE = ["stroke", "distance", "pool_length"]
-idx = elenco.groupby(CHIAVE + ["stagione"])["time_sec"].idxmin()
-righe = elenco.loc[idx].copy()
+
+# Di default si vede ogni gara nuotata. La vista compatta tiene il migliore
+# di OGNI stagione, non il migliore assoluto: altrimenti con "Tutte le
+# stagioni" resterebbe una riga sola per combinazione e il badge PB si
+# accenderebbe su tutte, confrontando un tempo con se stesso.
+solo_migliori = st.toggle(
+    "Solo il miglior tempo per stagione", value=False, key="scheda_solo_migliori",
+    help="Spento si vedono tutte le gare nuotate, anche piu' volte la stessa "
+         "specialita' nella stessa stagione. Acceso resta una riga sola per "
+         "specialita', vasca e stagione.")
+
+if solo_migliori:
+    idx = elenco.groupby(CHIAVE + ["stagione"])["time_sec"].idxmin()
+    righe = elenco.loc[idx].copy()
+else:
+    righe = elenco.copy()
 
 if not alltime.empty:
     righe = righe.merge(alltime[CHIAVE + ["pb_alltime_sec"]], on=CHIAVE, how="left")
@@ -325,8 +336,9 @@ righe["gap"] = righe["time_sec"] - pd.to_numeric(righe["pb_alltime_sec"],
 
 righe["ord_stile"] = righe["stroke"].apply(_ordine_stile)
 righe["ord_dist"] = righe["distance"].apply(_distanza)
-righe = righe.sort_values(["ord_stile", "ord_dist", "pool_length", "stagione"],
-                          ascending=[True, True, True, False])
+righe = righe.sort_values(
+    ["ord_stile", "ord_dist", "pool_length", "stagione", "comp_date"],
+    ascending=[True, True, True, False, False])
 
 for stile in righe["stroke"].unique():
     st.markdown(f'<div class="stroke-head">{stile}</div>', unsafe_allow_html=True)
@@ -365,7 +377,11 @@ for stile in righe["stroke"].unique():
                 f'</div>')
         st.markdown(f'<div class="combo-box">{blocco}</div>', unsafe_allow_html=True)
 
-st.caption("Una riga per stagione con il miglior tempo di quella stagione. "
-           "Il badge PB segna il personale di sempre di quella specialita' e "
-           "vasca; sulle altre righe c'e' il distacco da quel tempo. Con una "
-           "sola stagione selezionata resta una riga per specialita'.")
+_quante = (f"{len(righe)} righe su {len(elenco)} gare nel periodo"
+           if solo_migliori else
+           f"{len(righe)} gare, tutte quelle nuotate nel periodo")
+st.caption(
+    f"{_quante}. Il badge PB segna il personale di sempre di quella "
+    "specialita' e vasca; sulle altre righe c'e' il distacco da quel tempo. "
+    "Con l'interruttore acceso resta una riga sola per specialita', vasca e "
+    "stagione, con il miglior tempo di quella stagione.")

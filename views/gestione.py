@@ -19,7 +19,9 @@ if not auth.is_admin():
 atleti = crud.elenco_atleti()
 manif = crud.elenco_manifestazioni()
 n_accessi = int(data.access_log_stats().get("righe") or 0)
-n_atleti = int((atleti["is_deleted"] == False).sum()) if not atleti.empty else 0  # noqa: E712
+_attivi = atleti[atleti["is_deleted"] == False] if not atleti.empty else atleti  # noqa: E712
+n_atleti = int(_attivi["is_athlete"].astype(bool).sum()) if not atleti.empty else 0
+n_staff = int(_attivi["is_staff"].astype(bool).sum()) if not atleti.empty else 0
 n_manif = int((manif["is_deleted"] == False).sum()) if not manif.empty else 0     # noqa: E712
 
 
@@ -30,7 +32,9 @@ def _voce(icona: str, titolo: str, sottotitolo: str, pagina: str, chiave: str) -
         st.switch_page(pagina)
 
 
-_voce("📇", "Anagrafica atleti", f"{n_atleti} tesserati attivi",
+_voce("📇", "Anagrafica atleti",
+      f"{n_atleti} tesserati attivi"
+      + (f", {n_staff} fra allenatori e staff" if n_staff else ""),
       "views/anagrafica.py", "atleti")
 _voce("📅", "Anagrafica manifestazioni", f"{n_manif} manifestazioni in calendario",
       "views/manifestazioni.py", "manifestazioni")

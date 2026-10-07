@@ -111,7 +111,7 @@ if futuri.empty:
             "dall'Anagrafica manifestazioni."
             if auth.is_admin() else
             "Nessuna manifestazione futura in calendario: le prossime le "
-            "carica la segreteria.")
+            "carica l'amministratore.")
 else:
     st.markdown("".join(_scheda(r, True) for r in futuri.to_dict("records")),
                 unsafe_allow_html=True)
