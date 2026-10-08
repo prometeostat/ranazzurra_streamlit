@@ -38,6 +38,8 @@ _voce("📇", "Anagrafica atleti",
       "views/anagrafica.py", "atleti")
 _voce("📅", "Anagrafica manifestazioni", f"{n_manif} manifestazioni in calendario",
       "views/manifestazioni.py", "manifestazioni")
+_voce("⏱️", "Inserisci tempi", "Tempi e punti FIN, gara per gara",
+      "views/tempi.py", "tempi")
 _voce("🔐", "Registro accessi", f"{n_accessi} righe a database",
       "views/accessi.py", "accessi")
 

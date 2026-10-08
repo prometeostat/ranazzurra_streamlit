@@ -34,12 +34,16 @@ if not auth.is_admin():
 st.session_state.setdefault("man_mode", "lista")     # lista | nuovo | modifica
 st.session_state.setdefault("man_id", None)
 st.session_state.setdefault("man_conferma", None)
+st.session_state.setdefault("gara_mode", None)       # None | nuova | id gara
+st.session_state.setdefault("gara_conferma", None)
 
 
 def _torna() -> None:
     st.session_state["man_mode"] = "lista"
     st.session_state["man_id"] = None
     st.session_state["man_conferma"] = None
+    st.session_state["gara_mode"] = None
+    st.session_state["gara_conferma"] = None
 
 
 def _data(v):
@@ -145,6 +149,172 @@ def _form(gara: dict | None) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════
+# Gare della manifestazione
+# ══════════════════════════════════════════════════════════════════
+# Sta sotto al form di modifica, fuori dal form: dentro un st.form i
+# bottoni non fanno rerun finche' non si invia, e qui invece ogni azione
+# deve rispondere subito.
+
+def _form_gara(comp_id: int, gara: dict | None, specialita: pd.DataFrame) -> None:
+    nuova = gara is None
+    st.markdown(f'<div class="section-title">'
+                f'{"Nuova gara" if nuova else "Modifica gara"}</div>',
+                unsafe_allow_html=True)
+
+    ids = specialita["race_event_id"].astype(int).tolist()
+    nomi = {int(r["race_event_id"]): str(r["etichetta"])
+            for _, r in specialita.iterrows()}
+    corrente = None if nuova else int(gara.get("race_event_id") or 0)
+
+    with st.form("form_gara"):
+        evento = st.selectbox(
+            "Specialità *", options=ids,
+            index=ids.index(corrente) if corrente in ids else 0,
+            format_func=lambda i: nomi.get(i, str(i)),
+            help="Sono le combinazioni di stile, distanza e staffetta già a "
+                 "database: l'app non ne crea di nuove.")
+        vasca = st.radio("Vasca *", crud.VASCHE, horizontal=True,
+                         index=(crud.VASCHE.index(int(gara["pool_length"]))
+                                if (not nuova and int(gara.get("pool_length") or 0)
+                                    in crud.VASCHE) else 0),
+                         format_func=lambda v: f"{v}m")
+        nome = st.text_input(
+            "Nome gara", value="" if nuova else (gara.get("name") or ""),
+            max_chars=crud.MAX_NOME_PROVA,
+            placeholder=nomi.get(evento, ""),
+            help="Come sta sui risultati, per esempio \"50 Dorso - Assoluti "
+                 "Maschi\". Lasciandolo vuoto prende il nome della specialità.")
+        b1, b2 = st.columns(2)
+        salva = b1.form_submit_button("Salva", type="primary",
+                                      use_container_width=True)
+        annulla = b2.form_submit_button("Annulla", use_container_width=True)
+
+    if annulla:
+        st.session_state["gara_mode"] = None
+        st.rerun()
+    if not salva:
+        return
+
+    dati = {"race_event_id": int(evento), "pool_length": int(vasca),
+            "nome": (nome or "").strip() or nomi.get(int(evento), "")}
+    errori = crud.valida_gara(dati)
+    if errori:
+        for e in errori:
+            st.error(e)
+        return
+
+    if nuova:
+        crud.crea_gara(int(comp_id), dati)
+        st.session_state["gara_msg"] = f"Gara creata: {dati['nome']}."
+    else:
+        crud.aggiorna_gara(int(gara["race_id"]), dati)
+        st.session_state["gara_msg"] = f"Gara aggiornata: {dati['nome']}."
+    st.session_state["gara_mode"] = None
+    st.rerun()
+
+
+def _sezione_gare(comp_id: int) -> None:
+    st.markdown('<div class="section-title">Gare</div>', unsafe_allow_html=True)
+
+    msg = st.session_state.pop("gara_msg", None)
+    if msg:
+        st.success(msg)
+
+    specialita = crud.elenco_specialita()
+    if specialita.empty:
+        st.warning("Nessuna specialità a database: non si possono creare gare.")
+        return
+
+    modo = st.session_state.get("gara_mode")
+    gare = crud.gare_manifestazione(int(comp_id))
+
+    if modo == "nuova":
+        _form_gara(int(comp_id), None, specialita)
+        return
+    if modo is not None:
+        riga = gare[gare["race_id"] == int(modo)]
+        if riga.empty:
+            st.session_state["gara_mode"] = None
+            st.rerun()
+        _form_gara(int(comp_id), riga.iloc[0].to_dict(), specialita)
+        return
+
+    if st.button("＋  Nuova gara", use_container_width=True, key="gara_nuova"):
+        st.session_state["gara_mode"] = "nuova"
+        st.rerun()
+
+    if gare.empty:
+        st.info("Nessuna gara in questa manifestazione. Creala qui sopra e poi "
+                "carica i tempi da Gestione, Inserisci tempi.")
+        return
+
+    st.dataframe(
+        pd.DataFrame({
+            "Gara": gare["name"].fillna(gare["etichetta"]),
+            "Specialità": gare["etichetta"],
+            "Vasca": gare["pool_length"].map(lambda v: f"{int(v)}m"
+                                             if pd.notna(v) else "—"),
+            "Iscritti": gare["iscritti"].astype("Int64"),
+            "Con tempo": gare["con_tempo"].astype("Int64"),
+        }),
+        use_container_width=True, hide_index=True,
+    )
+
+    ids = gare["race_id"].astype(int).tolist()
+    etich = {int(r["race_id"]): (f'{r["name"] or r["etichetta"]} · '
+                                f'{int(r["pool_length"])}m · '
+                                f'{int(r["iscritti"])} iscritti')
+             for _, r in gare.iterrows()}
+    c1, c2, c3 = st.columns([4, 1.2, 1.2], vertical_alignment="bottom")
+    scelta = c1.selectbox("Gara", options=ids, key="gara_sel",
+                          format_func=lambda i: etich.get(i, str(i)))
+    if c2.button("Modifica", use_container_width=True, key="gara_mod"):
+        st.session_state["gara_mode"] = int(scelta)
+        st.rerun()
+    if c3.button("Elimina", use_container_width=True, key="gara_del"):
+        st.session_state["gara_conferma"] = int(scelta)
+        st.rerun()
+
+    if st.button("⏱  Inserisci i tempi di questa gara", use_container_width=True,
+                 key="gara_tempi"):
+        st.session_state["tempi_comp"] = int(comp_id)
+        st.session_state["tempi_race"] = int(scelta)
+        st.switch_page("views/tempi.py")
+
+    if st.session_state.get("gara_conferma") is not None:
+        rid = int(st.session_state["gara_conferma"])
+        r = gare[gare["race_id"] == rid]
+        if r.empty:
+            st.session_state["gara_conferma"] = None
+        else:
+            r = r.iloc[0]
+            n = int(r["iscritti"] or 0)
+            if n:
+                st.warning(f"**{r['name'] or r['etichetta']}** ha {n} iscritti. "
+                           "Prima togli i tempi da Inserisci tempi, poi la gara "
+                           "si elimina.")
+                if st.button("Ho capito", use_container_width=True,
+                             key="gara_ok_bloccata"):
+                    st.session_state["gara_conferma"] = None
+                    st.rerun()
+            else:
+                st.warning(f"Confermi l'eliminazione di "
+                           f"**{r['name'] or r['etichetta']}**? La gara viene "
+                           "messa a non attiva, non cancellata.")
+                c_ok, c_no = st.columns(2)
+                if c_ok.button("Sì, elimina", type="primary",
+                               use_container_width=True, key="gara_ok"):
+                    fatto, testo = crud.elimina_gara(rid)
+                    st.session_state["gara_conferma"] = None
+                    st.session_state["gara_msg"] = testo
+                    st.rerun()
+                if c_no.button("Annulla", use_container_width=True,
+                               key="gara_no"):
+                    st.session_state["gara_conferma"] = None
+                    st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════
 # Elenco
 # ══════════════════════════════════════════════════════════════════
 
@@ -166,7 +336,9 @@ if modo == "modifica":
     if riga.empty:
         _torna()
         st.rerun()
-    _form(riga.iloc[0].to_dict())
+    dati_manif = riga.iloc[0].to_dict()
+    _form(dati_manif)
+    _sezione_gare(int(dati_manif["comp_id"]))
     st.stop()
 
 c_new, c_stato = st.columns([1.4, 3], vertical_alignment="bottom")

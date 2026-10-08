@@ -716,6 +716,141 @@ ORDER BY 1
 
 
 # ══════════════════════════════════════════════════════════════════
+# Gare di una manifestazione e tempi degli atleti (CRUD)
+# ══════════════════════════════════════════════════════════════════
+# Note sullo schema, verificate sul DB:
+#   - la specialita' sta in race_events (stroke + distance + is_relay): sono
+#     32 combinazioni gia' pronte e l'app si limita a proporle, non ne crea
+#     di nuove;
+#   - races tiene il nome ufficiale della gara (varchar 200, es. "50 Dorso -
+#     Assoluti Maschi") e la vasca; la stessa specialita' compare piu' volte
+#     nella stessa manifestazione quando maschi e femmine gareggiano separati;
+#   - races e athlete_races NON hanno le colonne *_utc_date_time di modifica
+#     e cancellazione, che invece athletes e competitions hanno: qui si
+#     scrivono solo last_modification_user_id e deletion_user_id;
+#   - athlete_races."group" (varchar 100) e' la categoria scritta sui
+#     risultati, final_time e fin_score possono essere nulli (iscritto non
+#     partito, ritirato o squalificato);
+#   - un atleta compare una volta sola per gara, staffette comprese
+#     (verificato: zero doppioni a database).
+
+# Le 32 specialita' disponibili, per la tendina.
+RACE_EVENTS_SQL = """
+SELECT
+    re.id                                AS race_event_id,
+    s.name                               AS stroke,
+    d.type                               AS distance,
+    re.is_relay,
+    CASE WHEN re.is_relay
+         THEN 'Staffetta ' || d.type || ' ' || s.name
+         ELSE d.type || ' ' || s.name END AS etichetta,
+    CASE WHEN d.type ~ '^[0-9]+$' THEN (d.type)::int
+         WHEN d.type ~ '^[0-9]+x[0-9]+$' THEN (split_part(d.type, 'x', 2))::int
+         ELSE 999999 END                 AS dist_num
+FROM race_events re
+JOIN strokes   s ON s.id = re.stroke_id   AND s.is_deleted = FALSE
+JOIN distances d ON d.id = re.distance_id AND d.is_deleted = FALSE
+WHERE re.is_deleted = FALSE
+ORDER BY re.is_relay, s.name, dist_num
+"""
+
+# Gare di una manifestazione, con quanti iscritti hanno. %s: comp_id
+COMP_RACES_SQL = """
+SELECT
+    r.id                                 AS race_id,
+    r.name,
+    r.pool_length,
+    r.race_event_id,
+    s.name                               AS stroke,
+    d.type                               AS distance,
+    re.is_relay,
+    CASE WHEN re.is_relay
+         THEN 'Staffetta ' || d.type || ' ' || s.name
+         ELSE d.type || ' ' || s.name END AS etichetta,
+    CASE WHEN d.type ~ '^[0-9]+$' THEN (d.type)::int
+         WHEN d.type ~ '^[0-9]+x[0-9]+$' THEN (split_part(d.type, 'x', 2))::int
+         ELSE 999999 END                 AS dist_num,
+    (SELECT COUNT(*) FROM athlete_races ar
+      WHERE ar.race_id = r.id AND ar.is_deleted = FALSE)        AS iscritti,
+    (SELECT COUNT(*) FROM athlete_races ar
+      WHERE ar.race_id = r.id AND ar.is_deleted = FALSE
+        AND ar.final_time IS NOT NULL)                          AS con_tempo
+FROM races r
+JOIN race_events re ON re.id = r.race_event_id AND re.is_deleted = FALSE
+JOIN strokes     s  ON s.id  = re.stroke_id    AND s.is_deleted  = FALSE
+JOIN distances   d  ON d.id  = re.distance_id  AND d.is_deleted  = FALSE
+WHERE r.competition_id = %s AND r.is_deleted = FALSE
+ORDER BY re.is_relay, s.name, dist_num, r.pool_length, r.name
+"""
+
+# %s: nome, vasca, comp_id, race_event_id, user_id
+RACE_INSERT_SQL = """
+INSERT INTO races
+    (name, pool_length, competition_id, race_event_id, creation_user_id,
+     is_deleted)
+VALUES (%s, %s, %s, %s, %s, FALSE)
+RETURNING id
+"""
+
+# %s: nome, vasca, race_event_id, user_id, race_id
+RACE_UPDATE_SQL = """
+UPDATE races SET
+    name          = %s,
+    pool_length   = %s,
+    race_event_id = %s,
+    last_modification_user_id = %s
+WHERE id = %s
+"""
+
+# Soft delete, come ovunque. %s: user_id, race_id
+RACE_DEACTIVATE_SQL = """
+UPDATE races SET is_deleted = TRUE, deletion_user_id = %s WHERE id = %s
+"""
+
+# Iscritti di una gara, con il tempo in secondi per la griglia. %s: race_id
+RACE_ENTRIES_SQL = """
+SELECT
+    ar.id                                    AS entry_id,
+    ar.athlete_id,
+    btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
+    a.is_deleted                             AS atleta_inattivo,
+    EXTRACT(EPOCH FROM ar.final_time)::float AS time_sec,
+    ar.fin_score,
+    ar."group"                               AS categoria
+FROM athlete_races ar
+JOIN athletes a ON a.id = ar.athlete_id
+WHERE ar.race_id = %s AND ar.is_deleted = FALSE
+ORDER BY EXTRACT(EPOCH FROM ar.final_time) NULLS LAST,
+         btrim(a.last_name), btrim(a.first_name)
+"""
+
+# %s: race_id, athlete_id, final_time, fin_score, group, user_id
+ENTRY_INSERT_SQL = """
+INSERT INTO athlete_races
+    (race_id, athlete_id, final_time, fin_score, "group", creation_user_id,
+     is_deleted)
+VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+RETURNING id
+"""
+
+# %s: athlete_id, final_time, fin_score, group, user_id, entry_id
+ENTRY_UPDATE_SQL = """
+UPDATE athlete_races SET
+    athlete_id = %s,
+    final_time = %s,
+    fin_score  = %s,
+    "group"    = %s,
+    last_modification_user_id = %s
+WHERE id = %s
+"""
+
+# Soft delete. %s: user_id, entry_id
+ENTRY_DEACTIVATE_SQL = """
+UPDATE athlete_races SET is_deleted = TRUE, deletion_user_id = %s WHERE id = %s
+"""
+
+
+# ══════════════════════════════════════════════════════════════════
 # Registro accessi
 # ══════════════════════════════════════════════════════════════════
 

@@ -29,9 +29,10 @@ ranazzurra_streamlit/
 │   ├── classifiche.py  top 5 per specialita', filtro categoria, M e F divisi
 │   ├── risultati.py    una manifestazione, gara per gara, con gli iscritti
 │   ├── profilo.py      account, preferiti, tema, installazione
-│   ├── gestione.py     indice delle anagrafiche (solo admin)
+│   ├── gestione.py     indice dell'area riservata (solo admin)
 │   ├── anagrafica.py   anagrafica atleti (solo admin)
-│   └── manifestazioni.py  anagrafica manifestazioni (solo admin)
+│   ├── manifestazioni.py  anagrafica manifestazioni e loro gare (solo admin)
+│   └── tempi.py        inserimento tempi e punti FIN (solo admin)
 └── .streamlit/
     ├── config.toml     tema scuro + enableStaticServing
     ├── secrets.toml    credenziali (in .gitignore)
@@ -616,6 +617,31 @@ risultati collegati restano a database e tornano appena la riattivi. Il form
 controlla che la fine non preceda l'inizio, che le iscrizioni non chiudano
 dopo la partenza e che i link comincino per http.
 
+### Le gare dentro la manifestazione
+
+Aprendo **Modifica** di una manifestazione, sotto al form compare la sezione
+**Gare**: elenco con nome, specialita', vasca, iscritti e quanti hanno un
+tempo, piu' i bottoni per crearne una, modificarla, eliminarla e saltare
+dritti a Inserisci tempi con la gara gia' scelta. Sta fuori dal `st.form`
+apposta: dentro un form i bottoni non fanno rerun finche' non si invia, e
+qui invece ogni azione deve rispondere subito.
+
+Una gara (`races`) e' una specialita' nuotata in una manifestazione in una
+certa vasca: `race_event_id` (stile + distanza + staffetta), `pool_length`,
+`competition_id` e un `name` libero. Il form propone **solo le 32
+combinazioni gia' a database** e non ne crea di nuove, cosi' non nascono
+doppioni e le query che raggruppano per specialita' restano pulite. Il nome
+segue il formato delle 2.876 gare gia' presenti, "50 Dorso - Assoluti
+Maschi": lasciandolo vuoto prende quello della specialita'. La stessa
+specialita' puo' ripetersi nella stessa manifestazione, ed e' normale:
+maschi e femmine sono due gare distinte, oggi sono 628 le combinazioni che
+si ripetono.
+
+**Eliminare una gara con dei tempi dentro non si puo'.** L'app dice quanti
+sono e manda a Inserisci tempi: cancellare la gara porterebbe via dieci
+risultati in un colpo solo senza che si veda. Sulla gara vuota la soft
+delete e' quella di sempre.
+
 
 Nel form ci sono due spunte che decidono cosa e' quella persona. **Atleta**
 la fa comparire nei selettori, nelle classifiche e nei conteggi, ed e' spuntata
@@ -635,6 +661,49 @@ Sotto alle azioni c'e' il riquadro **Accesso all'app**: stato della password
 dell'atleta selezionato, data dell'ultimo accesso e i tre bottoni per
 azzerare la password, generare una temporanea o sospendere l'accesso. Chi non
 ha un'e-mail in anagrafica non puo' entrare, e il riquadro lo dice.
+
+---
+
+## Inserisci tempi
+
+Terza voce di Gestione, fra Anagrafica manifestazioni e Registro accessi
+(`views/tempi.py`, url `/inserisci-tempi`), riservata all'amministratore. Si
+sceglie la manifestazione, poi la gara, e sotto compare una griglia con gli
+iscritti: atleta, tempo, punti FIN e categoria. Si modifica come un foglio
+di calcolo, si aggiungono righe in fondo, si tolgono con il cestino, e un
+bottone solo scrive tutto. Arrivando dal bottone della sezione Gare la
+manifestazione e la gara sono gia' selezionate.
+
+Perche' una griglia e non un form riga per riga: una gara sono dieci o
+quindici atleti presi da un PDF, e fare dieci salvataggi separati sarebbe
+una pena. La chiave del `data_editor` porta dentro il `race_id`, cosi'
+cambiando gara Streamlit riparte da zero invece di applicare alla gara
+sbagliata le modifiche rimaste in sospeso.
+
+**Il formato del tempo** e' quello che si scrive di getto: `29.45`,
+`1:02.35`, `1:01:02.35`, con la virgola al posto del punto se capita.
+Lasciarlo vuoto e' una scelta legittima e vuol dire iscritto senza tempo,
+non partito, ritirato o squalificato: a database esistono gia' 136 righe
+cosi'. I punti FIN si scrivono a mano, non li calcola nessuno: sono quelli
+dei risultati ufficiali. La categoria e' il campo `"group"`, libero e quasi
+sempre vuoto (7.441 righe su 7.642); nei dati vecchi contiene la societa' e
+il gruppo di batteria, non la categoria master, quindi l'app non ci mette
+niente di suo.
+
+**Prima si controlla tutto, poi si scrive.** Se una riga e' sbagliata (tempo
+illeggibile, atleta mancante, stesso atleta due volte nella stessa gara) non
+parte nessuna query e la griglia resta come l'hai lasciata: meglio zero
+scritture che restare a meta' strada. Il salvataggio confronta la griglia
+con quello che c'era prima e fa solo il necessario: `INSERT` per le righe
+nuove, `UPDATE` per quelle cambiate davvero, `is_deleted = TRUE` per quelle
+tolte. Le righe identiche non vengono riscritte.
+
+Nel menu atleti ci sono i tesserati attivi, piu' quelli gia' iscritti a
+quella gara anche se nel frattempo sono stati disattivati: se no la loro
+riga resterebbe senza etichetta e il salvataggio li butterebbe fuori. Per le
+staffette serve una riga per frazionista, tutte con il tempo della squadra,
+che e' esattamente come stanno a database le 873 righe di staffetta gia'
+presenti.
 
 ---
 

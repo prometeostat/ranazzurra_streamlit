@@ -73,6 +73,8 @@ if auth.is_admin():
     PAGINE["manifestazioni"] = st.Page("views/manifestazioni.py",
                                        title="Anagrafica manifestazioni",
                                        url_path="anagrafica-manifestazioni")
+    PAGINE["tempi"] = st.Page("views/tempi.py", title="Inserisci tempi",
+                              url_path="inserisci-tempi")
     PAGINE["accessi"] = st.Page("views/accessi.py", title="Registro accessi",
                                 url_path="registro-accessi")
 
@@ -85,7 +87,7 @@ VOCI = [
 ]
 if auth.is_admin():
     VOCI.append(("gestione", "🛠️", "Gestione",
-                 {"gestione", "atleti", "manifestazioni", "accessi"}))
+                 {"gestione", "atleti", "manifestazioni", "tempi", "accessi"}))
 
 nav = st.navigation(list(PAGINE.values()), position="hidden")
 
