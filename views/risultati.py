@@ -20,7 +20,8 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_time, pool_label
-from views._common import inline_filters, page_header, season_year
+from views._common import (apply_fin, inline_filters, page_header,
+                           season_year)
 
 page_header("Manifestazioni", "Gare, iscritti e tempi")
 
@@ -33,9 +34,9 @@ def _scorda() -> None:
     st.session_state.pop("mf_vista", None)
 
 
-inline_filters("mf", pool=False)
+inline_filters("mf", pool=False, on_fin=_scorda)
 
-agenda = data.load_agenda(season_year()).copy()
+agenda = apply_fin(data.load_agenda(season_year())).copy()
 if not agenda.empty:
     agenda["start_date"] = pd.to_datetime(agenda["start_date"], errors="coerce")
     # Solo quelle dove siamo scesi in acqua: le altre non hanno gare da mostrare.
@@ -97,8 +98,16 @@ if riga.get("vasche"):
 meta.append(f"{n_gare} gare")
 meta.append(f"{n_atleti} atleti")
 
+# Il bollino dice subito se i tempi valgono per le graduatorie federali.
+ufficiale = bool(riga.get("is_fin"))
+SPENTO = ("background:rgba(164,182,210,0.12);border-color:var(--border);"
+          "color:var(--muted)")
+bollino = (f'<span class="badge-cat" style="margin-left:8px;'
+           f'{"" if ufficiale else SPENTO}">'
+           f'{"FIN" if ufficiale else "non ufficiale"}</span>')
+
 st.markdown(f'''<div class="ag-card">
-  <div class="ag-data">{giorno}</div>
+  <div class="ag-data">{giorno}{bollino}</div>
   <div class="ag-nome">{nome}</div>
   <div class="ag-meta">{html.escape(" · ".join(meta))}</div>
 </div>''', unsafe_allow_html=True)

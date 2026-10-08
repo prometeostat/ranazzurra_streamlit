@@ -20,8 +20,8 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_int, fmt_time, pool_label, section
-from views._common import (apply_pool, inline_filters, page_header,
-                           pool_filter, season_year)
+from views._common import (apply_pool, fin_filter, inline_filters,
+                           page_header, pool_filter, season_year)
 
 TUTTE = "Tutte le gare in comune"
 
@@ -62,7 +62,7 @@ if a == b:
 
 inline_filters("confronto")
 
-df = apply_pool(data.load_compare((a, b), sy).copy())
+df = apply_pool(data.load_compare((a, b), sy, fin_filter()).copy())
 if df.empty:
     st.info("Nessun tempo con i filtri selezionati.")
     st.stop()

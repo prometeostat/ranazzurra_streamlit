@@ -16,7 +16,8 @@ import streamlit as st
 import auth
 import data
 import season as season_mod
-from views._common import inline_filters, page_header, season_year
+from views._common import (apply_fin, inline_filters, page_header,
+                           season_year)
 
 OGGI = _dt.date.today()
 
@@ -24,7 +25,7 @@ page_header("Agenda", "Calendario manifestazioni")
 inline_filters("agenda", pool=False)
 
 sy = season_year()
-manif = data.load_agenda(sy).copy()
+manif = apply_fin(data.load_agenda(sy)).copy()
 
 cerca = st.text_input("Cerca manifestazione", placeholder="Nome, citta', organizzatore…",
                       label_visibility="collapsed", key="agenda_cerca")
@@ -111,7 +112,7 @@ if futuri.empty:
             "dall'Anagrafica manifestazioni."
             if auth.is_admin() else
             "Nessuna manifestazione futura in calendario: le prossime le "
-            "carica l'amministratore.")
+            "carica la segreteria.")
 else:
     st.markdown("".join(_scheda(r, True) for r in futuri.to_dict("records")),
                 unsafe_allow_html=True)

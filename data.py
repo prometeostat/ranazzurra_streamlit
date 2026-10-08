@@ -18,6 +18,7 @@ from queries import (
     AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
     FIN_LEADERBOARD_SQL, FREQUENCY_SQL, PB_SQL, RACES_SQL, RANKING_SQL,
     SEASONS_SQL, SEASON_META_SQL, SPLITS_BY_EVENT_SQL, SPLITS_SQL, TREND_SQL,
+    con_fin,
 )
 
 TTL = 3600
@@ -60,18 +61,20 @@ def load_all_athletes(season_year: int) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_report(athlete_id: int, season_year: int) -> dict:
+def load_report(athlete_id: int, season_year: int,
+                solo_fin: bool | None = None) -> dict:
     curr_start, curr_end = season_mod.bounds(season_year)
     # In modalita' "tutte le stagioni" non esiste una stagione precedente:
     # previous_bounds restituisce un intervallo vuoto e i PB di confronto
     # risultano nulli, che e' esattamente quello che vogliamo mostrare.
     prev_start, prev_end = season_mod.previous_bounds(season_year)
 
-    meta = query_df(SEASON_META_SQL, (athlete_id, curr_start, curr_end))
+    meta = query_df(con_fin(SEASON_META_SQL, solo_fin),
+                    (athlete_id, curr_start, curr_end))
     meta = _num(meta, ("total_races", "total_competitions", "distinct_events",
                        "avg_fin_score", "best_fin_score"))
 
-    pb = query_df(PB_SQL, (
+    pb = query_df(con_fin(PB_SQL, solo_fin), (
         curr_start, curr_end,
         prev_start, prev_end,
         curr_start, curr_end,
@@ -81,13 +84,15 @@ def load_report(athlete_id: int, season_year: int) -> dict:
     pb = _num(pb, ("pb_curr_sec", "pb_prev_sec", "pb_alltime_sec",
                    "pool_length", "swims_curr", "swims_total"))
 
-    ranking = query_df(RANKING_SQL, (curr_start, curr_end, athlete_id))
+    ranking = query_df(con_fin(RANKING_SQL, solo_fin),
+                       (curr_start, curr_end, athlete_id))
     ranking = _num(ranking, ("pb_sec", "rank_club", "n_club", "pool_length"))
 
-    freq = query_df(FREQUENCY_SQL, (athlete_id, curr_start, curr_end))
+    freq = query_df(con_fin(FREQUENCY_SQL, solo_fin),
+                    (athlete_id, curr_start, curr_end))
     freq = _num(freq, ("races", "events"))
 
-    trend = query_df(TREND_SQL, (athlete_id,))
+    trend = query_df(con_fin(TREND_SQL, solo_fin), (athlete_id,))
     trend = _num(trend, ("time_sec", "pool_length", "fin_score", "season_start_year"))
     if not trend.empty:
         trend["season_label"] = trend["season_start_year"].apply(
@@ -101,17 +106,19 @@ def load_report(athlete_id: int, season_year: int) -> dict:
 # ══════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_races(athlete_id: int, season_year: int) -> pd.DataFrame:
+def load_races(athlete_id: int, season_year: int,
+               solo_fin: bool | None = None) -> pd.DataFrame:
     start, end = season_mod.bounds(season_year)
-    df = query_df(RACES_SQL, (athlete_id, start, end))
+    df = query_df(con_fin(RACES_SQL, solo_fin), (athlete_id, start, end))
     return _num(df, ("time_sec", "pool_length", "fin_score", "n_split",
                      "athlete_race_id", "comp_id"))
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_alltime_pb(athlete_id: int) -> pd.DataFrame:
+def load_alltime_pb(athlete_id: int,
+                    solo_fin: bool | None = None) -> pd.DataFrame:
     """Personale di sempre per specialita' e vasca, per il badge PB."""
-    df = query_df(ALLTIME_PB_SQL, (athlete_id,))
+    df = query_df(con_fin(ALLTIME_PB_SQL, solo_fin), (athlete_id,))
     return _num(df, ("pb_alltime_sec", "pool_length"))
 
 
@@ -191,16 +198,19 @@ def split_table(seg_secs: list[float], distance: str | int,
 # ══════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_compare(athlete_ids: tuple[int, ...], season_year: int) -> pd.DataFrame:
+def load_compare(athlete_ids: tuple[int, ...], season_year: int,
+                 solo_fin: bool | None = None) -> pd.DataFrame:
     if not athlete_ids:
         return pd.DataFrame()
     start, end = season_mod.bounds(season_year)
-    df = query_df(COMPARE_PB_SQL, (list(athlete_ids), start, end))
+    df = query_df(con_fin(COMPARE_PB_SQL, solo_fin),
+                  (list(athlete_ids), start, end))
     return _num(df, ("pb_sec", "fin_score", "pool_length", "athlete_id"))
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_club_ranking(season_year: int) -> pd.DataFrame:
+def load_club_ranking(season_year: int,
+                      solo_fin: bool | None = None) -> pd.DataFrame:
     """
     Miglior tempo di ogni atleta per specialita', vasca e stagione, con la
     categoria master di QUELLA stagione: un 50 stile del 2019 vale nella
@@ -208,7 +218,7 @@ def load_club_ranking(season_year: int) -> pd.DataFrame:
     valere per maschi e femmine insieme; 0 e' il giovanile.
     """
     start, end = season_mod.bounds(season_year)
-    df = query_df(CLUB_RANKING_SQL, (start, end))
+    df = query_df(con_fin(CLUB_RANKING_SQL, solo_fin), (start, end))
     df = _num(df, ("pb_sec", "pool_length", "athlete_id", "birth_year",
                    "stagione"))
     if df.empty:
@@ -228,9 +238,10 @@ def load_club_ranking(season_year: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def load_fin_leaderboard(season_year: int) -> pd.DataFrame:
+def load_fin_leaderboard(season_year: int,
+                         solo_fin: bool | None = None) -> pd.DataFrame:
     start, end = season_mod.bounds(season_year)
-    df = query_df(FIN_LEADERBOARD_SQL, (start, end))
+    df = query_df(con_fin(FIN_LEADERBOARD_SQL, solo_fin), (start, end))
     return _num(df, ("fin_score", "pool_length", "time_sec", "athlete_id"))
 
 

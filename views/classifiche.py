@@ -20,7 +20,8 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_time, pool_label, rank_html, section
-from views._common import apply_pool, inline_filters, page_header, season_year
+from views._common import (apply_pool, fin_filter, inline_filters,
+                           page_header, season_year)
 
 TOP = 5
 TUTTE_CAT = "Tutte le categorie"
@@ -29,7 +30,7 @@ sy = season_year()
 page_header("Classifiche", "Master Conegliano")
 inline_filters("classifiche")
 
-rk = apply_pool(data.load_club_ranking(sy).copy())
+rk = apply_pool(data.load_club_ranking(sy, fin_filter()).copy())
 if rk.empty:
     st.info("Nessun tempo con i filtri selezionati.")
     st.stop()

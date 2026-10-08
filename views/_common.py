@@ -40,6 +40,30 @@ def stroke_filter() -> str:
     return st.session_state.get("stroke_filter", TUTTE_LE_GARE)
 
 
+# Manifestazioni ufficiali FIN o no. A database e' competitions.is_fin, qui
+# dentro gira come None / True / False: None vuol dire "non filtrare".
+TUTTE_LE_MANIF = "Tutte"
+FIN_UI = {TUTTE_LE_MANIF: None, "Ufficiali FIN": True, "Non ufficiali": False}
+
+
+def fin_filter() -> bool | None:
+    """Valore da passare ai loader: None, True o False."""
+    return FIN_UI.get(st.session_state.get("fin_filter", TUTTE_LE_MANIF))
+
+
+def apply_fin(df: pd.DataFrame, col: str = "is_fin") -> pd.DataFrame:
+    """Stesso filtro, ma su un DataFrame gia' caricato.
+
+    Serve solo dove la riga e' la manifestazione (l'agenda): sui tempi il
+    filtro deve stare nella query, perche' li' c'e' di mezzo il miglior tempo
+    per atleta e scartare righe dopo lascerebbe dei buchi.
+    """
+    scelta = fin_filter()
+    if scelta is None or df.empty or col not in df.columns:
+        return df
+    return df[df[col].astype(bool) == scelta].copy()
+
+
 def apply_stroke(df: pd.DataFrame, col: str = "stroke") -> pd.DataFrame:
     scelta = stroke_filter()
     if scelta == TUTTE_LE_GARE or df.empty or col not in df.columns:
@@ -168,12 +192,17 @@ def _sync(src: str, dst: str) -> None:
 
 
 def inline_filters(prefix: str = "pg", pool: bool = True,
-                   strokes: bool = False) -> None:
+                   strokes: bool = False, fin: bool = True,
+                   on_fin=None) -> None:
     """
-    Periodo (All Time o singola stagione), vasca e, dove serve, tipo di gara.
-    Usa chiavi proprie e ricopia la scelta in season_year / pool_filter /
-    stroke_filter con on_change: il callback gira a inizio rerun, quindi la
-    barra laterale si ridisegna gia' allineata.
+    Periodo (All Time o singola stagione), vasca, manifestazioni ufficiali e,
+    dove serve, tipo di gara. Usa chiavi proprie e ricopia la scelta in
+    season_year / pool_filter / fin_filter / stroke_filter con on_change: il
+    callback gira a inizio rerun, quindi le pagine si ridisegnano gia'
+    allineate.
+
+    on_fin e' un callback in piu' per chi deve reagire al cambio di filtro
+    (la pagina Manifestazioni, che butta via la tabella aperta).
     """
     cols = st.columns([3, 4] if pool else [1])
     seasons = data.load_seasons()
@@ -195,6 +224,22 @@ def inline_filters(prefix: str = "pg", pool: bool = True,
                       on_change=_sync, args=(k_pool, "pool_filter"),
                       help="Tutte include anche le gare di fondo, che non hanno "
                            "una lunghezza vasca.")
+
+    if fin:
+        k_fin = f"{prefix}_fin"
+        st.session_state[k_fin] = st.session_state.get("fin_filter",
+                                                       TUTTE_LE_MANIF)
+
+        def _sync_fin() -> None:
+            st.session_state["fin_filter"] = st.session_state[k_fin]
+            if on_fin is not None:
+                on_fin()
+
+        st.radio("Manifestazioni", list(FIN_UI), horizontal=True, key=k_fin,
+                 on_change=_sync_fin,
+                 help="Ufficiali FIN sono le gare del calendario federale. "
+                      "Fuori restano il circuito Aquasport, le traversate in "
+                      "acque libere e le gare sociali.")
 
     if strokes:
         k_stile = f"{prefix}_stile"

@@ -230,6 +230,58 @@ separato che legge un'API.
 
 ---
 
+## Gare ufficiali FIN
+
+`competitions.is_fin` dice se una manifestazione e' del calendario federale.
+Serve perche' nel database convivono due mondi: le gare FIN, dove il tempo
+vale per le graduatorie e c'e' il punteggio, e tutto il resto (il circuito
+Aquasport, le traversate in acque libere, la gara sociale dello Stroppolo),
+dove il tempo e' comunque un tempo ma non si puo' confrontare allo stesso
+modo. Quanto pesa: su 2.085 combinazioni atleta/specialita'/vasca, 462
+esistono **solo** grazie a gare non ufficiali e in altri 164 casi il
+personale cambia se si contano le sole ufficiali.
+
+La colonna e' `boolean NOT NULL DEFAULT TRUE`: in dubbio una manifestazione
+nuova e' ufficiale, che e' il caso piu' frequente. Il primo riempimento ha
+seguito questa regola, nell'ordine:
+
+1. il nome contiene *aquasport* o *acquasport* → non ufficiale (63 righe,
+   anche quando il link porta a finveneto, perche' il circuito usa comunque
+   il portale regionale);
+2. nessun link al sito → ufficiale: sono le manifestazioni future del
+   calendario, il link arriva dopo (12 righe);
+3. il link contiene *finveneto* o *federnuoto* → ufficiale;
+4. tutto il resto → non ufficiale.
+
+Poi due correzioni a mano: i Campionati Italiani Master di Riccione (link a
+microplustiming) e il Circuito Regionale FVG Master Open (link a natatoria).
+Risultato: 259 ufficiali e 72 no, fra cui le nove non-Aquasport che ci si
+aspetta di trovare li' (Rovigno, Caorle, le traversate, lo Stroppolo,
+SwimTeen).
+
+Da qui in avanti il flag si gestisce dall'app: in Anagrafica manifestazioni
+c'e' la spunta **Manifestazione ufficiale FIN** nel form e la colonna FIN
+nell'elenco. Niente SQL a mano per correggere un caso.
+
+In Agenda, Confronta, Scheda atleta, Classifiche e Manifestazioni c'e' il
+radio **Manifestazioni**: Tutte (predefinito), Ufficiali FIN, Non ufficiali.
+La scelta vive in `fin_filter` e la si legge con `fin_filter()`, che
+restituisce `None`, `True` o `False`.
+
+Il punto tecnico: **il filtro sta nella SQL, non nel DataFrame**. Le query
+dei tempi tengono gia' solo la riga migliore per atleta (`DISTINCT ON`,
+`MIN`), quindi buttare via le righe non ufficiali dopo lascerebbe un buco
+dove c'era un personale fatto in una gara non ufficiale, invece del miglior
+tempo utile. Ogni query interessata ha il marcatore `/*FIN*/` attaccato alla
+JOIN su `competitions` e `queries.con_fin(sql, solo_fin)` lo trasforma in
+`AND co.is_fin = TRUE/FALSE`. Non e' un parametro `%s` perche' andrebbe
+infilato nell'ordine giusto in dieci query con parametri posizionali, ed e'
+il modo piu' comodo per sbagliare; il valore e' un booleano nostro, niente
+che scriva l'utente finisce in quella stringa. Sull'agenda, dove la riga
+*e'* la manifestazione, basta `apply_fin()` sul DataFrame.
+
+---
+
 ## Scheda atleta
 
 Due schermate. La prima e' il selettore: casella di ricerca, la propria
@@ -247,9 +299,11 @@ una riga per stagione, con la categoria master di quell'anno e il badge PB
 sul personale di sempre. Nessun grafico.
 
 I tre riquadri contano la stagione selezionata e ignorano i filtri vasca e
-gara, che valgono solo per l'elenco sotto. Quello del punteggio FIN dice
-anche quale gara l'ha prodotto, con data e manifestazione, ed e' cliccabile:
-porta alla scheda della manifestazione.
+gara, che valgono solo per l'elenco sotto; il filtro **Manifestazioni**
+(ufficiali FIN o no) invece conta anche per loro, perche' lavora nella query
+e non sul DataFrame gia' caricato. Quello del punteggio FIN dice anche quale
+gara l'ha prodotto, con data e manifestazione, ed e' cliccabile: porta alla
+scheda della manifestazione.
 
 Il periodo parte da *Tutte le stagioni*, cosi' la scheda si apre sullo
 storico completo e i personali sono quelli veri. Sotto al periodo c'e' il
@@ -339,8 +393,9 @@ Terza porta di Cerca, accanto ad Atleta e Classifiche, e pagina sua
 "Ultime manifestazioni", che mostrava quattro schede senza poterci entrare
 dentro.
 
-Si procede in tre passi: si sceglie il **Periodo**, si sceglie la
-**Manifestazione**, si preme **Visualizza** e sotto compare gara per gara
+Si procede in tre passi: si sceglie il **Periodo** (e, volendo, se vedere
+solo le ufficiali FIN), si sceglie la **Manifestazione**, si preme
+**Visualizza** e sotto compare gara per gara
 chi c'era, con tempo e punteggio FIN. Il bottone non e' un vezzo: con
 "tutte le stagioni" nel menu ci sono centinaia di manifestazioni e ognuna
 costa una query, quindi si scorre il menu senza che l'app parta a
@@ -550,8 +605,10 @@ Note sullo schema, verificate sul DB prima di scrivere il codice:
 Stesso schema dell'anagrafica atleti, riservata all'amministratore. Campi:
 nome (`competitions.type`), date di inizio e fine, apertura e chiusura
 iscrizioni, cronometraggio (tendina con i valori gia' presenti a database),
-massimo gare per atleta, link al sito e al PDF. Filtri per stato, per
-passato/futuro e ricerca sul nome.
+massimo gare per atleta, link al sito e al PDF, spunta **Manifestazione
+ufficiale FIN** (vedi la sezione Gare ufficiali FIN). Filtri per stato, per
+passato/futuro e ricerca sul nome; nell'elenco la colonna FIN dice a colpo
+d'occhio quali sono le ufficiali.
 
 Anche qui "Elimina" e' una soft delete: `is_deleted = TRUE`. La
 manifestazione sparisce da agenda, schede e classifiche, ma le gare e i

@@ -11,7 +11,36 @@ Convenzioni del DB da tenere a mente:
   - athlete_races non ha la posizione in gara e il DB contiene solo i nostri
     tesserati: le classifiche sono interne alla squadra, il confronto con gli
     avversari passa dal punteggio FIN.
+  - competitions.is_fin distingue le manifestazioni ufficiali FIN dal resto
+    (circuito Aquasport, traversate, gare sociali): vedi con_fin() qui sotto.
 """
+
+
+# ══════════════════════════════════════════════════════════════════
+# Filtro gare ufficiali
+# ══════════════════════════════════════════════════════════════════
+
+def con_fin(sql: str, solo_fin: bool | None = None) -> str:
+    """Accende il filtro sulle manifestazioni ufficiali dentro una query.
+
+    Le query che portano tempi hanno il marcatore /*FIN*/ attaccato alla JOIN
+    su competitions; qui dentro diventa una condizione vera. Il valore non
+    arriva come parametro perche' e' un booleano scelto da noi fra tre casi
+    (None = tutte, True = solo FIN, False = solo non FIN): se fosse un %s
+    andrebbe infilato nell'ordine giusto in dieci query diverse, che e' il
+    modo migliore per sbagliare. Niente di quello che scrive l'utente finisce
+    in questa stringa.
+
+    Il filtro va messo nella SQL e non applicato dopo sul DataFrame: molte
+    query tengono gia' solo la riga migliore per atleta (DISTINCT ON, MIN),
+    quindi scartare le righe a valle lascerebbe un buco invece del miglior
+    tempo utile.
+    """
+    if solo_fin is None:
+        return sql
+    return sql.replace("/*FIN*/",
+                       "AND co.is_fin = " + ("TRUE" if solo_fin else "FALSE"))
+
 
 # ══════════════════════════════════════════════════════════════════
 # Anagrafica
@@ -112,7 +141,7 @@ SELECT
     MAX(ar.fin_score)                            AS best_fin_score
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 WHERE ar.athlete_id  = %s
   AND ar.is_deleted  = FALSE
@@ -144,7 +173,7 @@ SELECT
     COUNT(ar.id)                                             AS swims_total
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 JOIN distances    d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -180,7 +209,7 @@ WITH ranked AS (
     FROM athletes a
     JOIN athlete_races ar ON ar.athlete_id = a.id       AND ar.is_deleted = FALSE
     JOIN races         r  ON r.id = ar.race_id          AND r.is_deleted  = FALSE
-    JOIN competitions  co ON co.id = r.competition_id   AND co.is_deleted = FALSE
+    JOIN competitions  co ON co.id = r.competition_id   AND co.is_deleted = FALSE /*FIN*/
     JOIN race_events   re ON re.id = r.race_event_id    AND re.is_deleted = FALSE
     JOIN strokes       s  ON s.id  = re.stroke_id       AND s.is_deleted  = FALSE
     JOIN distances     d  ON d.id  = re.distance_id     AND d.is_deleted  = FALSE
@@ -208,7 +237,7 @@ SELECT
                ORDER BY s.name)             AS strokes_swum
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 WHERE ar.athlete_id  = %s
@@ -235,7 +264,7 @@ SELECT
     END                                      AS season_start_year
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 JOIN distances    d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -270,7 +299,7 @@ SELECT
       WHERE st.athlete_race_id = ar.id AND st.is_deleted = FALSE) AS n_split
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 JOIN distances    d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -328,7 +357,7 @@ SELECT
     MIN(co.start_date)                            AS prima_gara
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
-JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events  re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes      s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 JOIN distances    d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -368,7 +397,7 @@ SELECT * FROM (
     FROM athletes a
     JOIN athlete_races ar ON ar.athlete_id = a.id      AND ar.is_deleted = FALSE
     JOIN races         r  ON r.id = ar.race_id         AND r.is_deleted  = FALSE
-    JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+    JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
     JOIN race_events   re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
     JOIN strokes       s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
     JOIN distances     d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -419,7 +448,7 @@ SELECT * FROM (
     FROM athletes a
     JOIN athlete_races ar ON ar.athlete_id = a.id      AND ar.is_deleted = FALSE
     JOIN races         r  ON r.id = ar.race_id         AND r.is_deleted  = FALSE
-    JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+    JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
     JOIN race_events   re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
     JOIN strokes       s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
     JOIN distances     d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -451,7 +480,7 @@ SELECT
 FROM athletes a
 JOIN athlete_races ar ON ar.athlete_id = a.id      AND ar.is_deleted = FALSE
 JOIN races         r  ON r.id = ar.race_id         AND r.is_deleted  = FALSE
-JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE
+JOIN competitions  co ON co.id = r.competition_id  AND co.is_deleted = FALSE /*FIN*/
 JOIN race_events   re ON re.id = r.race_event_id   AND re.is_deleted = FALSE
 JOIN strokes       s  ON s.id  = re.stroke_id      AND s.is_deleted  = FALSE
 JOIN distances     d  ON d.id  = re.distance_id    AND d.is_deleted  = FALSE
@@ -602,6 +631,7 @@ SELECT
     co.website_link,
     co.pdf_link,
     co.close_registration_date,
+    co.is_fin,
     btrim(org.name)             AS organizzatore,
     COALESCE(n.nostre_gare, 0)  AS nostre_gare,
     COALESCE(n.nostri_atleti, 0) AS nostri_atleti,
@@ -627,29 +657,27 @@ SELECT
     co.website_link,
     co.pdf_link,
     co.max_races_per_athlete,
-    co.organizer_company_id,
-    btrim(org.name)             AS organizzatore,
+    co.is_fin,
     co.is_deleted,
     (SELECT COUNT(*) FROM races r
       WHERE r.competition_id = co.id AND r.is_deleted = FALSE) AS n_gare
 FROM competitions co
-LEFT JOIN companies org ON org.id = co.organizer_company_id
 ORDER BY co.start_date DESC
 """
 
 # %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
-#     organizzatore, user_id
+#     is_fin, user_id
 COMPETITION_INSERT_SQL = """
 INSERT INTO competitions
     ("type", start_date, end_date, open_registration_date,
      close_registration_date, timing, website_link, pdf_link,
-     max_races_per_athlete, organizer_company_id, creation_user_id, is_deleted)
+     max_races_per_athlete, is_fin, creation_user_id, is_deleted)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
 RETURNING id
 """
 
 # %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
-#     organizzatore, user_id, comp_id
+#     is_fin, user_id, comp_id
 COMPETITION_UPDATE_SQL = """
 UPDATE competitions SET
     "type"                  = %s,
@@ -661,7 +689,7 @@ UPDATE competitions SET
     website_link            = %s,
     pdf_link                = %s,
     max_races_per_athlete   = %s,
-    organizer_company_id    = %s,
+    is_fin                  = %s,
     last_modification_user_id = %s
 WHERE id = %s
 """
@@ -684,56 +712,6 @@ SELECT DISTINCT btrim(timing) AS timing
 FROM competitions
 WHERE timing IS NOT NULL AND btrim(timing) <> ''
 ORDER BY 1
-"""
-
-# ── Clonazione ────────────────────────────────────────────────────
-# Le gare attive di una manifestazione, con l'etichetta leggibile del tipo
-# di gara: e' l'elenco che si copia quando si clona un'edizione passata.
-# %s: comp_id
-COMPETITION_RACES_SQL = """
-SELECT
-    r.id                AS race_id,
-    r.name              AS nome,
-    r.pool_length,
-    r.race_event_id,
-    (CASE WHEN re.is_relay THEN 'Staffetta ' ELSE '' END)
-        || d.type || ' ' || s.name              AS evento
-FROM races r
-LEFT JOIN race_events re ON re.id = r.race_event_id
-LEFT JOIN strokes     s  ON s.id  = re.stroke_id
-LEFT JOIN distances   d  ON d.id  = re.distance_id
-WHERE r.competition_id = %s
-  AND r.is_deleted = FALSE
-ORDER BY r.id
-"""
-
-# Tipi di gara disponibili, per la tendina dell'editor di clonazione.
-# L'ordine numerico si ricava dalle cifre: le distanze delle staffette sono
-# scritte "4x50", quindi un CAST diretto a int fallirebbe.
-RACE_EVENTS_SQL = """
-SELECT
-    re.id,
-    (CASE WHEN re.is_relay THEN 'Staffetta ' ELSE '' END)
-        || d.type || ' ' || s.name              AS evento
-FROM race_events re
-JOIN strokes   s ON s.id = re.stroke_id   AND s.is_deleted = FALSE
-JOIN distances d ON d.id = re.distance_id AND d.is_deleted = FALSE
-WHERE re.is_deleted = FALSE
-ORDER BY re.is_relay,
-         s.name,
-         NULLIF(regexp_replace(d.type, '[^0-9]', '', 'g'), '')::int NULLS LAST,
-         re.id
-"""
-
-# Una gara nuova dentro una manifestazione. races non ha
-# last_modification_user_id: c'e' solo creation_user_id, ed e' NOT NULL.
-# %s: nome, pool_length, competition_id, race_event_id, user_id
-RACE_INSERT_SQL = """
-INSERT INTO races
-    (name, pool_length, competition_id, race_event_id,
-     creation_user_id, is_deleted)
-VALUES (%s, %s, %s, %s, %s, FALSE)
-RETURNING id
 """
 
 
