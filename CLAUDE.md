@@ -71,6 +71,59 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - Colori solo tramite variabili CSS in `theme.py`, una terna per tema (scuro
   e chiaro). Ogni ritocco grafico va controllato in tutti e due i temi.
 
+## Script standalone (fuori da Streamlit)
+
+- `db.py` dipende da `st.secrets` e `st.cache_resource`: gli script lanciati
+  a mano **non lo importano**. Leggono `.streamlit/secrets.toml` con
+  `tomllib` (sezione `[postgres]`, poi `[app] db_user_id` per
+  `creation_user_id`, default 1) e usano psycopg direttamente; fallback sulle
+  variabili `PG*`, come `db.py`.
+- **Trappola psycopg3**: la connessione parte con `autocommit=False`, quindi
+  gia' le SELECT aprono una transazione implicita. Un `conn.transaction()`
+  successivo diventa un savepoint annidato: il commit chiude solo il
+  savepoint e la `conn.close()` finale fa rollback di tutto **senza errori**
+  (gli id di RETURNING esistono solo dentro la transazione: il programma
+  stampa "scritto" e il DB resta vuoto — successo sull'import Aquasport
+  10/11/2013). Regola: `conn.autocommit = True` subito dopo la connect, poi
+  `with conn.transaction():` per le scritture, e dopo il commit rileggere i
+  conteggi dal DB come verifica.
+- Ogni script di scrittura ha `--dry-run` (solo lettura, stampa il piano) e
+  chiede conferma prima di scrivere.
+
+## Import risultati da PDF
+
+`import_risultati.py <file.pdf>` importa i "riepilogo risultati" FIN Veneto
+(intestazione RISULTATI RIEPILOGATIVI). Generico: niente dati embedded,
+parsa il PDF e riconcilia tutto a runtime. Uso tipico:
+
+1. la manifestazione si crea prima dall'app (Anagrafica manifestazioni):
+   lo script la riconosce dalla data nel PDF (o con `--competition-id`);
+2. `python import_risultati.py file.pdf --dry-run` stampa il piano;
+3. `python import_risultati.py file.pdf` scrive dopo conferma.
+
+Regole del loader (tutte gia' validate su manifestazioni reali):
+
+- tengono solo le righe delle societa' Ranazzurra; atleti matchati su
+  "COGNOME NOME" + anno di nascita (`btrim`): chi non e' in anagrafica
+  blocca tutto l'import e va creato prima in Anagrafica atleti;
+- le gare si riconciliano per **evento + vasca + sesso**: il sesso sta nel
+  NOME della gara ("... Maschi" / "... Femmine" / "MX"), non nel
+  race_event — maschi e femmine condividono lo stesso evento, e uno stesso
+  evento puo' comparire piu' volte nella stessa manifestazione. Gara dello
+  stesso sesso con nome diverso = stop e verifica a mano (import storici
+  con nomi brevi tipo "50 Dorso");
+- una gara puo' continuare sulla pagina successiva senza ripetere il
+  titolo (pagina di continuazione: la riga dopo RISULTATI RIEPILOGATIVI e'
+  gia' un risultato, si eredita la gara precedente);
+- staffette: nel PDF i frazionisti sono le 2 righe atleta sopra e le 2
+  sotto la riga squadra (layout a meta' altezza), possono avere il
+  parziale fra parentesi che **non** si importa; la riga squadra puo'
+  avere il suffisso FG (fuori gara): si importa comunque col suo tempo;
+- `fin_score` si legge dalla colonna Pti quando c'e', altrimenti NULL
+  (i PDF Aquasport non la compilano);
+- idempotente: righe identiche gia' presenti vengono saltate, rieseguire
+  non crea doppioni.
+
 ## PWA e Community Cloud
 
 Su Community Cloud l'app gira dentro un iframe (`/~/+/`) del guscio di
