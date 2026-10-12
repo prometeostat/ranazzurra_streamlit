@@ -1,5 +1,8 @@
 """
-views/gestione.py — indice delle anagrafiche, riservato all'amministratore.
+views/gestione.py — indice dell'area riservata.
+
+Gli allenatori arrivano fin qui ma vedono solo le iscrizioni ricevute: le
+anagrafiche, i tempi e il registro accessi restano dell'amministratore.
 """
 from __future__ import annotations
 
@@ -7,22 +10,13 @@ import streamlit as st
 
 import auth
 import crud
-import data
 from views._common import page_header
 
-page_header("Gestione", "Anagrafiche")
+page_header("Gestione", "Iscrizioni e anagrafiche")
 
-if not auth.is_admin():
-    st.info("Sezione riservata all'amministratore.")
+if not auth.is_staff():
+    st.info("Sezione riservata ad allenatori e amministratore.")
     st.stop()
-
-atleti = crud.elenco_atleti()
-manif = crud.elenco_manifestazioni()
-n_accessi = int(data.access_log_stats().get("righe") or 0)
-_attivi = atleti[atleti["is_deleted"] == False] if not atleti.empty else atleti  # noqa: E712
-n_atleti = int(_attivi["is_athlete"].astype(bool).sum()) if not atleti.empty else 0
-n_staff = int(_attivi["is_staff"].astype(bool).sum()) if not atleti.empty else 0
-n_manif = int((manif["is_deleted"] == False).sum()) if not manif.empty else 0     # noqa: E712
 
 
 def _voce(icona: str, titolo: str, sottotitolo: str, pagina: str, chiave: str) -> None:
@@ -31,6 +25,27 @@ def _voce(icona: str, titolo: str, sottotitolo: str, pagina: str, chiave: str) -
                  key=f"hub_{chiave}", use_container_width=True):
         st.switch_page(pagina)
 
+
+# Tutti i numeri in un colpo solo, prima di disegnare: con una query per
+# riquadro le schede comparivano a scaglioni, una per ogni risposta del
+# database, e la pagina sembrava rotta.
+n = crud.conteggi_gestione()
+n_aperte = int(n.get("iscrivibili") or 0)
+
+_voce("📝", "Iscrizioni gare",
+      ("Nessuna manifestazione con iscrizioni aperte" if not n_aperte
+       else f"{n_aperte} manifestazioni con le iscrizioni aperte"),
+      "views/iscrizioni_admin.py", "iscrizioni_admin")
+
+if not auth.is_admin():
+    st.caption("Le anagrafiche, l'inserimento dei tempi e il registro "
+               "accessi sono riservati all'amministratore.")
+    st.stop()
+
+n_atleti = int(n.get("atleti") or 0)
+n_staff = int(n.get("staff") or 0)
+n_manif = int(n.get("manifestazioni") or 0)
+n_accessi = int(n.get("accessi") or 0)
 
 _voce("📇", "Anagrafica atleti",
       f"{n_atleti} tesserati attivi"

@@ -17,11 +17,18 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import crud
 import data
 import season as season_mod
 from theme import fmt_time, pool_label
-from views._common import (apply_fin, inline_filters, page_header,
-                           season_year)
+from views._common import (apply_fin, blocchi_programma, inline_filters,
+                           page_header, season_year)
+
+# Quanto avanti si guarda, come in Agenda: le manifestazioni piu' in la'
+# esistono a calendario ma non hanno ancora niente da mostrare qui, e
+# allungherebbero il menu per nulla.
+ORIZZONTE = 75
+OGGI = pd.Timestamp.today().normalize()
 
 page_header("Manifestazioni", "Gare, iscritti e tempi")
 
@@ -34,28 +41,51 @@ def _scorda() -> None:
     st.session_state.pop("mf_vista", None)
 
 
+# Seconda porta per le iscrizioni, oltre al bottone in Agenda: qui dentro
+# ci sono le manifestazioni gia' nuotate, quelle aperte alle iscrizioni
+# quasi mai, quindi il bottone porta alla pagina e la fa scegliere li'.
+_io = auth.current_user() or {}
+if _io.get("athlete_id") is not None:
+    _aperte = len(crud.manifestazioni_iscrivibili())
+    if _aperte:
+        if st.button(f"📝  Iscrizioni aperte · {_aperte} manifestazioni",
+                     use_container_width=True, key="mf_vai_iscrizioni"):
+            st.switch_page("views/iscrizioni_nuove.py")
+
 inline_filters("mf", pool=False, on_fin=_scorda)
 
 agenda = apply_fin(data.load_agenda(season_year())).copy()
 if not agenda.empty:
     agenda["start_date"] = pd.to_datetime(agenda["start_date"], errors="coerce")
-    # Solo quelle dove siamo scesi in acqua: le altre non hanno gare da mostrare.
-    agenda = (agenda[agenda["nostre_gare"].fillna(0) > 0]
-              .sort_values("start_date", ascending=False))
+    # Solo quelle dove c'e' qualcosa di nostro: nel passato sono i risultati,
+    # nel futuro gli iscritti, e a database sono la stessa riga di
+    # athlete_races, una con il tempo e l'altra ancora senza.
+    agenda = agenda[agenda["nostre_gare"].fillna(0) > 0]
+    # Il futuro si guarda fino a ORIZZONTE giorni: oltre ci sono solo
+    # iscrizioni che non si possono nemmeno fare ancora.
+    agenda = agenda[agenda["start_date"]
+                    <= OGGI + pd.Timedelta(days=ORIZZONTE)]
+    agenda = agenda.sort_values("start_date", ascending=False)
 
 if agenda.empty:
-    st.info("Nessuna manifestazione con nostri risultati nel periodo "
-            "selezionato. Allarga il periodo a tutte le stagioni.")
+    st.info("Nessuna manifestazione con nostri risultati o iscritti nel "
+            "periodo selezionato. Allarga il periodo a tutte le stagioni.")
     st.stop()
 
 ELENCO = {int(r["comp_id"]): r for r in agenda.to_dict("records")}
+
+
+def _futura(r) -> bool:
+    quando = r["start_date"]
+    return (not pd.isna(quando)) and quando >= OGGI
 
 
 def _etichetta_manif(comp_id: int) -> str:
     r = ELENCO[int(comp_id)]
     quando = r["start_date"]
     giorno = "—" if pd.isna(quando) else quando.strftime("%d/%m/%Y")
-    return f"{giorno} · {str(r.get('nome') or 'Manifestazione')}"
+    coda = "  ·  da nuotare" if _futura(r) else ""
+    return f"{giorno} · {str(r.get('nome') or 'Manifestazione')}{coda}"
 
 
 opzioni = list(ELENCO)
@@ -173,18 +203,37 @@ def _blocco(relay: bool, stroke: str, dist: str, pool, g: pd.DataFrame) -> str:
     )
 
 
-gruppi = res.groupby(["is_relay", "stroke", "distance", "pool_length"],
-                     sort=False, dropna=False)
-st.html("".join(
-    _blocco(bool(relay), str(stroke), str(dist), pool, g)
-    for (relay, stroke, dist, pool), g in gruppi
-))
+def _gruppi(fetta: pd.DataFrame) -> str:
+    gruppi = fetta.groupby(["is_relay", "stroke", "distance", "pool_length"],
+                           sort=False, dropna=False)
+    return "".join(_blocco(bool(relay), str(stroke), str(dist), pool, g)
+                   for (relay, stroke, dist, pool), g in gruppi)
 
-st.caption(
-    f"{n_gare} gare e {n_atleti} atleti nostri in {nome_grezzo}, {giorno}. "
-    "L'ordine dentro ogni gara e' quello del tempo; gli iscritti senza tempo "
-    "(non partiti, ritirati o squalificati) restano in elenco senza "
-    "posizione. Nelle staffette il tempo e' quello della squadra, uguale per "
-    "tutti i frazionisti, e il punteggio FIN non viene assegnato. La "
-    f"categoria e' quella della stagione {season_mod.label(stagione)}."
-)
+
+# Prima le giornate e le fasce, dentro ognuna le gare. Il programma si
+# compila in Anagrafica manifestazioni: dove non c'e', blocchi_programma
+# restituisce un pezzo solo senza intestazione e l'elenco resta piatto.
+pezzi = ""
+for titolo, fetta in blocchi_programma(res):
+    if titolo:
+        pezzi += f'<div class="stroke-head">{html.escape(titolo)}</div>'
+    pezzi += _gruppi(fetta)
+st.html(pezzi)
+
+if _futura(riga):
+    st.caption(
+        f"{n_gare} gare e {n_atleti} atleti iscritti in {nome_grezzo}, "
+        f"{giorno}: la manifestazione deve ancora essere nuotata, quindi i "
+        "tempi sono quelli dichiarati in iscrizione e le posizioni non ci "
+        "sono. Giornate e fasce orarie arrivano dal programma, che si "
+        "compila in Gestione, Anagrafica manifestazioni."
+    )
+else:
+    st.caption(
+        f"{n_gare} gare e {n_atleti} atleti nostri in {nome_grezzo}, {giorno}. "
+        "L'ordine dentro ogni gara e' quello del tempo; gli iscritti senza "
+        "tempo (non partiti, ritirati o squalificati) restano in elenco senza "
+        "posizione. Nelle staffette il tempo e' quello della squadra, uguale "
+        "per tutti i frazionisti, e il punteggio FIN non viene assegnato. La "
+        f"categoria e' quella della stagione {season_mod.label(stagione)}."
+    )

@@ -25,10 +25,17 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      ATHLETE_UPDATE_SQL, ATHLETES_ADMIN_SQL, COMPANIES_SQL,
                      COMPETITION_DEACTIVATE_SQL, COMPETITION_INSERT_SQL,
                      COMPETITION_REACTIVATE_SQL, COMPETITION_UPDATE_SQL,
-                     COMPETITIONS_ADMIN_SQL, COMP_RACES_SQL,
-                     ENTRY_DEACTIVATE_SQL, ENTRY_INSERT_SQL, ENTRY_UPDATE_SQL,
+                     COMPETITIONS_ADMIN_SQL, COMP_ENTRIES_ADMIN_SQL,
+                     COMP_RACES_SQL, ENTRY_DEACTIVATE_SQL, ENTRY_INSERT_SQL,
+                     ENTRY_OWNER_SQL, ENTRY_REACTIVATE_SQL, ENTRY_STATE_SQL,
+                     ENTRY_UPDATE_SQL,
                      RACE_DEACTIVATE_SQL, RACE_ENTRIES_SQL, RACE_EVENTS_SQL,
-                     RACE_INSERT_SQL, RACE_UPDATE_SQL, TIMINGS_SQL)
+                     RACE_INSERT_SQL, RACE_PROGRAM_UPDATE_SQL,
+                     RACE_UPDATE_SQL, SIGNUP_COUNT_SQL,
+                     GESTIONE_CONTEGGI_SQL, MY_SIGNUPS_SQL,
+                     SIGNUP_INSERT_SQL, SIGNUP_MEETS_SQL,
+                     SIGNUP_RACES_SQL,
+                     SIGNUP_UPDATE_SQL, SIGNUP_WINDOW_SQL, TIMINGS_SQL)
 
 MAX_NOME = 50        # varchar(50) su first_name, last_name ed email
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
@@ -136,13 +143,19 @@ def _pulisci(dati: dict) -> tuple:
 
 
 def crea_atleta(dati: dict) -> int:
-    """Inserisce una persona attiva in anagrafica e restituisce il nuovo id."""
+    """Inserisce una persona in anagrafica e restituisce il nuovo id.
+
+    Lo stato arriva dal form: "Attivo" spuntato vuol dire is_deleted = FALSE,
+    che e' anche il valore predefinito. La scadenza del certificato e'
+    facoltativa e puo' restare nulla.
+    """
     fin, nome, cognome, sesso, nascita, email = _pulisci(dati)
     riga = execute(
         ATHLETE_INSERT_SQL,
         (fin, nome, cognome, sesso, nascita, email,
          dati.get("company_id"), _user_id(),
-         bool(dati.get("is_athlete", True)), bool(dati.get("is_staff", False))),
+         bool(dati.get("is_athlete", True)), bool(dati.get("is_staff", False)),
+         not bool(dati.get("attivo", True)), dati.get("certificato")),
         returning=True,
     )
     _svuota_cache()
@@ -150,14 +163,27 @@ def crea_atleta(dati: dict) -> int:
 
 
 def aggiorna_atleta(athlete_id: int, dati: dict) -> int:
+    """Aggiorna i dati anagrafici, certificato medico compreso.
+
+    Lo stato Attivo NON passa di qui: ha le sue due funzioni, che riempiono
+    anche i campi di cancellazione (deletion_user_id e la data). Il form lo
+    gestisce chiamandole quando la spunta cambia.
+    """
     fin, nome, cognome, sesso, nascita, email = _pulisci(dati)
     n = execute(ATHLETE_UPDATE_SQL,
                 (fin, nome, cognome, sesso, nascita, email,
                  bool(dati.get("is_athlete", True)),
                  bool(dati.get("is_staff", False)),
+                 dati.get("certificato"),
                  _user_id(), int(athlete_id)))
     _svuota_cache()
     return n
+
+
+def imposta_stato_atleta(athlete_id: int, attivo: bool) -> int:
+    """Attiva o disattiva, riusando le funzioni di soft delete di sempre."""
+    return (riattiva_atleta(int(athlete_id)) if attivo
+            else disattiva_atleta(int(athlete_id)))
 
 
 def disattiva_atleta(athlete_id: int) -> int:
@@ -184,7 +210,8 @@ MAX_LINK = 500           # website_link e pdf_link sono varchar(500)
 def elenco_manifestazioni() -> pd.DataFrame:
     """Anagrafica manifestazioni, comprese le disattivate."""
     df = query_df(COMPETITIONS_ADMIN_SQL)
-    for c in ("comp_id", "max_races_per_athlete", "n_gare"):
+    for c in ("comp_id", "max_races_per_athlete", "n_gare",
+              "organizer_company_id"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
@@ -230,6 +257,40 @@ def valida_manifestazione(dati: dict) -> list[str]:
     return errori
 
 
+def _intero(v) -> int | None:
+    """
+    Intero oppure None. Passa da pd.isna per primo: i valori che arrivano da
+    un data_editor con colonna Int64 sono pd.NA, e pd.NA dentro un confronto
+    come `v in (None, "")` solleverebbe TypeError invece di dire "vuoto".
+    """
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str) and not v.strip():
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _data_pura(v) -> _dt.date | None:
+    """datetime.date oppure None: psycopg da' date, pandas a volte Timestamp
+    o NaT, e un data_editor svuotato da' None."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, pd.Timestamp):
+        return v.date()
+    if isinstance(v, _dt.datetime):
+        return v.date()
+    return v if isinstance(v, _dt.date) else None
+
+
 def _pulisci_manifestazione(dati: dict) -> tuple:
     def testo(k, limite):
         v = (dati.get(k) or "").strip()
@@ -248,6 +309,9 @@ def _pulisci_manifestazione(dati: dict) -> tuple:
         # Manifestazione del calendario federale: in dubbio vale si', come il
         # default della colonna a database.
         bool(dati.get("is_fin", True)),
+        # organizer_company_id accetta NULL e buona parte dello storico ce
+        # l'ha davvero vuoto: zero e pd.NA valgono "non indicato".
+        _intero(dati.get("organizer_company_id")) or None,
     )
 
 
@@ -284,6 +348,12 @@ def riattiva_manifestazione(comp_id: int) -> int:
 MAX_NOME_PROVA = 200     # races.name e' varchar(200)
 MAX_CATEGORIA = 100      # athlete_races."group" e' varchar(100)
 VASCHE = [25, 50]
+# Fasce orarie di una giornata di gara, nell'ordine in cui si nuotano. Il
+# numero e' quello che sta a database in races.session, con un CHECK che lo
+# tiene fra 1 e 3. In una giornata ci possono essere solo il mattino, solo il
+# pomeriggio, mattino e pomeriggio oppure pomeriggio e sera: l'app non
+# impone quali combinazioni, le riconosce e basta.
+SESSIONI = {1: "Mattino", 2: "Pomeriggio", 3: "Sera"}
 PUNTI_MAX = 1500         # fin_score e' smallint, ma oltre il migliaio non si va
 
 
@@ -305,9 +375,11 @@ def elenco_specialita() -> pd.DataFrame:
 def gare_manifestazione(comp_id: int) -> pd.DataFrame:
     df = query_df(COMP_RACES_SQL, (int(comp_id),))
     for c in ("race_id", "pool_length", "race_event_id", "iscritti",
-              "con_tempo", "dist_num"):
+              "con_tempo", "dist_num", "session", "race_order"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "race_date" in df.columns:
+        df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
     return df
 
 
@@ -322,7 +394,20 @@ def nome_gara_proposto(etichetta: str, dettaglio: str = "") -> str:
     return nome[:MAX_NOME_PROVA]
 
 
-def valida_gara(dati: dict) -> list[str]:
+def _sessione(v) -> int | None:
+    """Numero di fascia oraria valido, oppure None. Accetta anche l'etichetta
+    a video ('Mattino'), che e' quello che torna da un data_editor."""
+    n = _intero(v)
+    if n in SESSIONI:
+        return n
+    testo = "" if n is not None else str(v or "").strip().lower()
+    for numero, nome in SESSIONI.items():
+        if testo == nome.lower():
+            return numero
+    return None
+
+
+def valida_gara(dati: dict, manifestazione: dict | None = None) -> list[str]:
     errori: list[str] = []
     if not dati.get("race_event_id"):
         errori.append("Scegli la specialita'.")
@@ -333,31 +418,113 @@ def valida_gara(dati: dict) -> list[str]:
         errori.append(f"Il nome non puo' superare i {MAX_NOME_PROVA} caratteri.")
     if dati.get("pool_length") not in VASCHE:
         errori.append("La vasca puo' essere 25 o 50 metri.")
+
+    ordine = _intero(dati.get("race_order"))
+    if ordine is not None and ordine < 1:
+        errori.append("Il numero di programma parte da 1.")
+    if dati.get("session") is not None and _sessione(dati.get("session")) is None:
+        errori.append("La fascia oraria puo' essere mattino, pomeriggio o sera.")
+
+    # La giornata deve cadere dentro la manifestazione. Il controllo si fa
+    # qui e non con un CHECK: starebbe su due tabelle e vorrebbe un trigger.
+    giorno = dati.get("race_date")
+    if giorno is not None and manifestazione:
+        inizio = manifestazione.get("start_date")
+        fine = manifestazione.get("end_date") or inizio
+        if inizio and (giorno < inizio or giorno > fine):
+            errori.append(
+                f"La giornata {giorno.strftime('%d/%m/%Y')} e' fuori dalla "
+                f"manifestazione ({inizio.strftime('%d/%m/%Y')}"
+                + (f" – {fine.strftime('%d/%m/%Y')}" if fine != inizio else "")
+                + ").")
     return errori
 
 
-def crea_gara(comp_id: int, dati: dict) -> int:
+def _programma(dati: dict) -> tuple:
+    """(giornata, fascia, numero di programma) pronti per il database."""
+    return (dati.get("race_date") or None,
+            _sessione(dati.get("session")),
+            _intero(dati.get("race_order")))
+
+
+def _inserisci_gara(comp_id: int, dati: dict) -> int:
+    """L'INSERT nudo, senza svuotare i cache: la clonazione ne fa molte di
+    fila e li svuota una volta sola alla fine."""
     riga = execute(RACE_INSERT_SQL, (
         (dati.get("nome") or "").strip()[:MAX_NOME_PROVA],
         int(dati["pool_length"]),
         int(comp_id),
         int(dati["race_event_id"]),
-        _user_id(),
-    ), returning=True)
-    _svuota_cache()
+    ) + _programma(dati) + (_user_id(),), returning=True)
     return int(riga["id"]) if riga else -1
 
 
+def crea_gara(comp_id: int, dati: dict) -> int:
+    nuovo = _inserisci_gara(int(comp_id), dati)
+    _svuota_cache()
+    return nuovo
+
+
 def aggiorna_gara(race_id: int, dati: dict) -> int:
+    # Niente utente di ultima modifica: races non ha quella colonna.
     n = execute(RACE_UPDATE_SQL, (
         (dati.get("nome") or "").strip()[:MAX_NOME_PROVA],
         int(dati["pool_length"]),
         int(dati["race_event_id"]),
-        _user_id(),
-        int(race_id),
-    ))
+    ) + _programma(dati) + (int(race_id),))
     _svuota_cache()
     return n
+
+
+def salva_programma(comp_id: int, righe: list[dict]) -> tuple[int, list[str]]:
+    """
+    Scrive giornata, fascia e numero di programma di piu' gare in un colpo.
+
+    Tocca solo quelle tre colonne: nome, vasca e specialita' restano quelle
+    che sono, cosi' la griglia del programma non puo' rovinare il resto della
+    gara. Le righe che non appartengono a questa manifestazione vengono
+    scartate, non e' un controllo di cortesia: l'id arriva da un data_editor
+    e una riga sbagliata riscriverebbe la gara di un'altra manifestazione.
+    Restituisce quante ne ha aggiornate e gli errori trovati.
+    """
+    gare = gare_manifestazione(int(comp_id))
+    ammesse = set(gare["race_id"].dropna().astype(int)) if not gare.empty else set()
+
+    manif = elenco_manifestazioni()
+    riga_m = manif[manif["comp_id"] == int(comp_id)]
+    quale = riga_m.iloc[0].to_dict() if not riga_m.empty else {}
+    limiti = {"start_date": _data_pura(quale.get("start_date")),
+              "end_date": _data_pura(quale.get("end_date"))}
+
+    errori: list[str] = []
+    da_scrivere = []
+    for r in righe:
+        rid = _intero(r.get("race_id"))
+        if rid is None or rid not in ammesse:
+            continue
+        giorno = _data_pura(r.get("race_date"))
+        fascia = _sessione(r.get("session"))
+        ordine = _intero(r.get("race_order"))
+        if ordine is not None and ordine < 1:
+            errori.append(f"Gara {rid}: il numero di programma parte da 1.")
+            continue
+        if giorno is not None and limiti["start_date"]:
+            fine = limiti["end_date"] or limiti["start_date"]
+            if giorno < limiti["start_date"] or giorno > fine:
+                errori.append(f"Gara {rid}: la giornata "
+                              f"{giorno.strftime('%d/%m/%Y')} e' fuori dalla "
+                              "manifestazione.")
+                continue
+        da_scrivere.append((giorno, fascia, ordine, rid))
+
+    if errori:
+        return 0, errori
+
+    fatte = 0
+    for parametri in da_scrivere:
+        fatte += execute(RACE_PROGRAM_UPDATE_SQL, parametri)
+    _svuota_cache()
+    return fatte, []
 
 
 def elimina_gara(race_id: int) -> tuple[bool, str]:
@@ -374,6 +541,38 @@ def elimina_gara(race_id: int) -> tuple[bool, str]:
     execute(RACE_DEACTIVATE_SQL, (_user_id(), int(race_id)))
     _svuota_cache()
     return True, "Gara eliminata."
+
+
+# ══════════════════════════════════════════════════════════════════
+# Clonazione di una manifestazione
+# ══════════════════════════════════════════════════════════════════
+
+def clona_manifestazione(dati: dict, gare: list[dict]) -> tuple[int, int]:
+    """
+    Crea la manifestazione e ci riattacca le gare scelte.
+
+    Si copia solo la struttura: nessun risultato viene duplicato, perche' i
+    tempi appartengono all'edizione in cui sono stati nuotati. Restituisce
+    l'id nuovo e quante gare sono state create; le righe senza specialita' o
+    senza vasca valida vengono saltate, non fanno fallire tutto.
+    """
+    nuovo_id = crea_manifestazione(dati)
+    if nuovo_id < 0:
+        return -1, 0
+    fatte = 0
+    for g in gare:
+        evento = _intero(g.get("race_event_id"))
+        vasca = _intero(g.get("pool_length"))
+        if not evento or vasca not in VASCHE:
+            continue
+        riga = {"nome": (g.get("nome") or "").strip(),
+                "pool_length": vasca, "race_event_id": evento}
+        if not riga["nome"]:
+            continue
+        if _inserisci_gara(nuovo_id, riga) > 0:
+            fatte += 1
+    _svuota_cache()
+    return nuovo_id, fatte
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -522,6 +721,289 @@ def salva_tempi(race_id: int, righe: list[dict],
         if eid not in rimaste:
             execute(ENTRY_DEACTIVATE_SQL, (_user_id(), eid))
             conteggi["eliminati"] += 1
+
+    _svuota_cache()
+    return conteggi, []
+
+
+# ══════════════════════════════════════════════════════════════════
+# Iscrizioni alle gare
+# ══════════════════════════════════════════════════════════════════
+# L'iscrizione e' la riga di athlete_races con entry_time valorizzato e
+# final_time ancora vuoto: quando la gara e' stata nuotata, Inserisci tempi
+# scrive il risultato sulla riga che c'e' gia'.
+#
+# Tutti i controlli stanno qui e non nelle pagine: la finestra temporale, il
+# limite di gare e la proprieta' dell'iscrizione si rileggono dal database
+# prima di ogni scrittura. Un bottone disabilitato a video non e' una
+# garanzia di niente.
+
+# Quanti giorni prima dell'apertura ufficiale la squadra raccoglie le
+# adesioni. Vale sia per il bottone in Agenda sia per la scrittura: la
+# regola e' una sola, e sta anche nelle query (vedi SIGNUP_MEETS_SQL).
+GIORNI_ANTICIPO = 30
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def conteggi_gestione() -> dict:
+    """I numeri dell'indice Gestione in una query sola.
+
+    Con quattro letture separate i riquadri comparivano a scaglioni, uno per
+    ogni risposta del database: la pagina sembrava rotta.
+    """
+    df = query_df(GESTIONE_CONTEGGI_SQL)
+    if df.empty:
+        return {}
+    return {k: int(v or 0) for k, v in df.iloc[0].to_dict().items()}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def manifestazioni_iscrivibili() -> pd.DataFrame:
+    """Manifestazioni con le iscrizioni aperte oggi, estremi compresi."""
+    df = query_df(SIGNUP_MEETS_SQL)
+    for c in ("comp_id", "max_gare", "n_gare"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def finestra_iscrizioni(comp_id: int) -> dict:
+    """Stato della finestra, riletto a database. Niente cache: e' il
+    controllo che decide se una scrittura puo' partire."""
+    df = query_df(SIGNUP_WINDOW_SQL, (int(comp_id),))
+    if df.empty:
+        return {"esiste": False, "aperta": False}
+    r = df.iloc[0].to_dict()
+    r["esiste"] = True
+    r["aperta"] = bool(r.get("aperta"))
+    massimo = r.get("max_gare")
+    # Limite non valorizzato (o zero) vuol dire nessun limite dichiarato.
+    r["max_gare"] = (None if massimo is None or pd.isna(massimo)
+                     or int(massimo) <= 0 else int(massimo))
+    return r
+
+
+def motivo_chiusura(finestra: dict) -> str:
+    """Frase da mostrare quando non si puo' scrivere."""
+    if not finestra.get("esiste"):
+        return "Manifestazione non trovata o non piu' attiva."
+    apertura, chiusura = finestra.get("apertura"), finestra.get("chiusura")
+    if apertura is None or chiusura is None:
+        return ("Per questa manifestazione non sono state registrate le date "
+                "di apertura e chiusura iscrizioni: chiedi all'amministratore.")
+    oggi = _dt.date.today()
+    anticipo = finestra.get("anticipo") or (apertura - _dt.timedelta(days=GIORNI_ANTICIPO))
+    if oggi < anticipo:
+        return (f"Si raccolgono le iscrizioni dal {anticipo.strftime('%d/%m/%Y')}, "
+                f"{GIORNI_ANTICIPO} giorni prima dell'apertura ufficiale del "
+                f"{apertura.strftime('%d/%m/%Y')}.")
+    if oggi > chiusura:
+        return f"Le iscrizioni si sono chiuse il {chiusura.strftime('%d/%m/%Y')}."
+    return "Iscrizioni non disponibili."
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def gare_iscrizione(comp_id: int, athlete_id: int) -> pd.DataFrame:
+    """Gare della manifestazione con la mia iscrizione e il mio personale.
+
+    Il personale arriva dalla query: stessa specialita' e stessa vasca, solo
+    gare individuali gia' nuotate.
+    """
+    df = query_df(SIGNUP_RACES_SQL, (int(athlete_id), int(athlete_id),
+                                     int(comp_id)))
+    for c in ("race_id", "pool_length", "dist_num", "entry_id", "entry_sec",
+              "time_sec", "pb_sec", "session", "race_order"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "race_date" in df.columns:
+        df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def iscrizioni_manifestazione(comp_id: int) -> pd.DataFrame:
+    """Tutte le iscrizioni di una manifestazione, per allenatori e admin."""
+    df = query_df(COMP_ENTRIES_ADMIN_SQL, (int(comp_id),))
+    for c in ("entry_id", "athlete_id", "fin_code", "birth_year", "race_id",
+              "pool_length", "dist_num", "entry_sec", "time_sec",
+              "session", "race_order"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "race_date" in df.columns:
+        df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def mie_iscrizioni(athlete_id: int) -> pd.DataFrame:
+    """Le mie iscrizioni alle manifestazioni non ancora concluse."""
+    df = query_df(MY_SIGNUPS_SQL, (int(athlete_id),))
+    for c in ("entry_id", "comp_id", "pool_length", "entry_sec", "time_sec",
+              "session", "race_order"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "race_date" in df.columns:
+        df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
+    return df
+
+
+def conta_individuali(athlete_id: int, comp_id: int) -> int:
+    df = query_df(SIGNUP_COUNT_SQL, (int(athlete_id), int(comp_id)))
+    return 0 if df.empty else int(df.iloc[0]["individuali"] or 0)
+
+
+def _iscrizione_di(entry_id: int) -> dict | None:
+    """Una riga di iscrizione per id, con il suo proprietario.
+
+    Non la usa piu' il salvataggio, che adesso rilegge tutta la
+    manifestazione con _stato_a_database: resta per chi deve controllare una
+    riga sola, per esempio prima di toccarla da una pagina di servizio.
+    """
+    df = query_df(ENTRY_OWNER_SQL, (int(entry_id),))
+    return None if df.empty else df.iloc[0].to_dict()
+
+
+def _stato_a_database(athlete_id: int, comp_id: int) -> dict[int, dict]:
+    """
+    Le righe che l'atleta ha davvero in quella manifestazione, adesso.
+
+    Niente cache: `gare_iscrizione` ne ha uno da 60 secondi, giusto per la
+    pagina ma pessimo per decidere se inserire o aggiornare. Fra il momento
+    in cui la pagina ha letto le gare e il momento in cui si salva puo'
+    essere entrata una riga da un'altra scheda del browser, da un altro
+    dispositivo o da Inserisci tempi, e allora l'inserimento sbatterebbe
+    contro l'indice unico.
+
+    Restituisce race_id -> riga, con la riga attiva che ha la precedenza su
+    quella cancellata (l'ORDER BY mette le attive per prime).
+    """
+    df = query_df(ENTRY_STATE_SQL, (int(athlete_id), int(comp_id)))
+    stato: dict[int, dict] = {}
+    if df.empty:
+        return stato
+    for r in df.to_dict("records"):
+        stato.setdefault(int(r["race_id"]), r)
+    return stato
+
+
+def salva_iscrizioni(athlete_id: int, comp_id: int,
+                     scelte: list[dict]) -> tuple[dict, list[str]]:
+    """Allinea le iscrizioni dell'atleta a quello che ha scelto in pagina.
+
+    scelte: una voce per gara con race_id, iscritto (bool), tempo (testo) e
+    l'entry_id se l'iscrizione c'e' gia'.
+
+    Controlla tutto prima di scrivere: finestra aperta, gare che appartengono
+    davvero a questa manifestazione, limite delle individuali, formato dei
+    tempi, e che ogni riga toccata sia dell'atleta e non porti gia' un
+    risultato. Se qualcosa non torna non parte nessuna query.
+    """
+    errori: list[str] = []
+    finestra = finestra_iscrizioni(int(comp_id))
+    if not finestra.get("aperta"):
+        return {}, [motivo_chiusura(finestra)]
+
+    # Le gare vere di questa manifestazione, rilette a database: cosi' un
+    # race_id arrivato da un widget manomesso non passa.
+    vere = gare_iscrizione(int(comp_id), int(athlete_id))
+    if vere.empty:
+        return {}, ["Questa manifestazione non ha gare."]
+    mappa = {int(r["race_id"]): r for r in vere.to_dict("records")}
+
+    volute: list[dict] = []
+    for s in scelte:
+        rid = s.get("race_id")
+        if rid is None or int(rid) not in mappa:
+            errori.append("Gara non valida per questa manifestazione.")
+            continue
+        gara = mappa[int(rid)]
+        if not s.get("iscritto"):
+            continue
+        relay = bool(gara.get("is_relay"))
+        # Nelle staffette l'atleta da' la disponibilita': la squadra e il
+        # tempo li decide l'allenatore, qui non si scrive nessun tempo.
+        tempo, err = (None, None) if relay else tempo_da_testo(s.get("tempo"))
+        if err:
+            errori.append(f"{gara['etichetta']}: {err}")
+        # Campo lasciato vuoto: vale il personale, che e' il tempo che la
+        # segreteria metterebbe comunque sul modulo.
+        if not relay and tempo is None and not err:
+            pb = gara.get("pb_sec")
+            if pb is not None and not pd.isna(pb):
+                tempo, _ = tempo_da_testo(tempo_in_testo(pb))
+        volute.append({"race_id": int(rid), "relay": relay, "tempo": tempo,
+                       "entry_id": s.get("entry_id")})
+
+    massimo = finestra.get("max_gare")
+    individuali = sum(1 for v in volute if not v["relay"])
+    if massimo is not None and individuali > massimo:
+        errori.append(f"Puoi iscriverti al massimo a {massimo} gare "
+                      f"individuali: ne hai scelte {individuali}. Le "
+                      "staffette non contano.")
+
+    # Lo stato vero, riletto adesso e senza cache: e' questo che decide fra
+    # inserire, aggiornare e riattivare, non l'entry_id che arriva dalla
+    # pagina. La pagina puo' avere in mano una fotografia vecchia di un
+    # minuto, e intanto la riga puo' essere nata altrove.
+    stato = _stato_a_database(int(athlete_id), int(comp_id))
+    presenti = {rid: r for rid, r in stato.items() if not r["is_deleted"]}
+    tenute = {v["race_id"] for v in volute}
+
+    for rid, r in presenti.items():
+        if rid in tenute:
+            continue
+        if r.get("final_time") is not None:
+            nome = mappa.get(rid, {}).get("etichetta", f"gara {rid}")
+            errori.append(f"{nome}: c'e' gia' il tempo di gara, "
+                          "l'iscrizione non si puo' togliere. Chiedi "
+                          "all'amministratore.")
+
+    if errori:
+        return {}, errori
+
+    conteggi = {"inserite": 0, "aggiornate": 0, "tolte": 0}
+
+    try:
+        for v in volute:
+            riga = stato.get(v["race_id"])
+
+            if riga is None:
+                # Nessuna traccia: si inserisce. L'ON CONFLICT dentro la
+                # query fa da rete se la riga nasce proprio adesso da
+                # un'altra parte: aggiorna il tempo invece di fallire.
+                execute(SIGNUP_INSERT_SQL, (v["race_id"], int(athlete_id),
+                                            v["tempo"], _user_id()))
+                conteggi["inserite"] += 1
+                continue
+
+            if riga["is_deleted"]:
+                # Si era tolto e ci ripensa: si rimette in piedi la riga
+                # vecchia invece di crearne un'altra sulla stessa gara.
+                execute(ENTRY_REACTIVATE_SQL, (v["tempo"], _user_id(),
+                                               int(riga["entry_id"])))
+                conteggi["inserite"] += 1
+                continue
+
+            if riga.get("final_time") is not None:
+                continue                  # c'e' gia' il risultato
+            if riga.get("entry_time") == v["tempo"]:
+                continue                  # niente da cambiare
+            execute(SIGNUP_UPDATE_SQL, (v["tempo"], _user_id(),
+                                        int(riga["entry_id"])))
+            conteggi["aggiornate"] += 1
+
+        for rid, r in presenti.items():
+            if rid in tenute or r.get("final_time") is not None:
+                continue
+            execute(ENTRY_DEACTIVATE_SQL, (_user_id(), int(r["entry_id"])))
+            conteggi["tolte"] += 1
+    except Exception:
+        # Qualunque cosa vada storta a database, l'atleta non deve vedere un
+        # traceback: le scritture vanno una per volta e in autocommit,
+        # quindi quelle gia' passate restano e basta rifare il salvataggio.
+        _svuota_cache()
+        return {}, ["Non sono riuscito a salvare tutto: riapri la pagina e "
+                    "controlla le tue iscrizioni prima di riprovare."]
 
     _svuota_cache()
     return conteggi, []

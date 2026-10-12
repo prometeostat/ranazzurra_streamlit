@@ -63,11 +63,26 @@ PAGINE = {
                            url_path="classifiche"),
     "risultati": st.Page("views/risultati.py", title="Manifestazioni",
                          url_path="manifestazioni"),
+    "iscrizioni": st.Page("views/iscrizioni.py", title="Iscrizioni",
+                          url_path="iscrizioni"),
+    "iscrizioni_nuove": st.Page("views/iscrizioni_nuove.py",
+                                title="Nuove iscrizioni",
+                                url_path="nuove-iscrizioni"),
+    "iscrizioni_mie": st.Page("views/iscrizioni_mie.py",
+                              title="Lista iscrizioni",
+                              url_path="lista-iscrizioni"),
     "profilo": st.Page("views/profilo.py", title="Profilo", url_path="profilo"),
 }
-if auth.is_admin():
+# Le iscrizioni ricevute le guardano anche gli allenatori, non solo
+# l'amministratore: la pagina si registra per tutti e due e dentro c'e' il
+# controllo auth.is_staff().
+if auth.is_staff():
     PAGINE["gestione"] = st.Page("views/gestione.py", title="Gestione",
                                  url_path="gestione")
+    PAGINE["iscrizioni_admin"] = st.Page("views/iscrizioni_admin.py",
+                                         title="Iscrizioni gare",
+                                         url_path="iscrizioni-gare")
+if auth.is_admin():
     PAGINE["atleti"] = st.Page("views/anagrafica.py", title="Anagrafica atleti",
                                url_path="anagrafica-atleti")
     PAGINE["manifestazioni"] = st.Page("views/manifestazioni.py",
@@ -82,12 +97,15 @@ if auth.is_admin():
 VOCI = [
     ("agenda", "📅", "Agenda", {"agenda"}),
     ("confronta", "⚖️", "Confronta", {"confronta"}),
-    ("cerca", "🔍", "Cerca", {"cerca", "scheda", "classifiche", "risultati"}),
+    ("cerca", "🔍", "Cerca",
+     {"cerca", "scheda", "classifiche", "risultati", "iscrizioni",
+      "iscrizioni_nuove", "iscrizioni_mie"}),
     ("profilo", "👤", "Profilo", {"profilo"}),
 ]
-if auth.is_admin():
+if auth.is_staff():
     VOCI.append(("gestione", "🛠️", "Gestione",
-                 {"gestione", "atleti", "manifestazioni", "tempi", "accessi"}))
+                 {"gestione", "iscrizioni_admin", "atleti", "manifestazioni",
+                  "tempi", "accessi"}))
 
 nav = st.navigation(list(PAGINE.values()), position="hidden")
 

@@ -15,9 +15,18 @@ import streamlit as st
 
 import auth
 import crud
+import season as season_mod
 from views._common import page_header
 
 STATI = ["Attivi", "Inattivi", "Tutti"]
+# Il certificato si segnala in anticipo: giallo da qui in giu', rosso quando
+# la data e' passata. Il giorno della scadenza vale ancora.
+GIORNI_PREAVVISO = 60
+# Tinte semitrasparenti: lo Styler finisce nel grid, che non risolve le
+# variabili CSS del tema, quindi i colori vanno scritti per esteso. Al 28%
+# restano leggibili sia sul fondo scuro sia su quello chiaro.
+ROSSO = "rgba(255,77,109,0.34)"
+GIALLO = "rgba(240,180,41,0.34)"
 RUOLI = ["Tutti", "Atleti", "Allenatori e staff"]
 ORDINAMENTI = {
     "Cognome": "last_name",
@@ -112,9 +121,20 @@ def _form(atleta: dict | None) -> None:
                  "resta fuori dagli elenchi atleti; chi fa tutti e due i ruoli "
                  "compare come tutti gli altri.")
 
-        st.checkbox("Attivo", value=True if nuovo else (not atleta["is_deleted"]),
-                    disabled=True,
-                    help="Si cambia con i pulsanti Disattiva e Riattiva nell'elenco.")
+        c9, c10 = st.columns(2)
+        certificato = c9.date_input(
+            "Scadenza certificato medico",
+            value=None if nuovo else _data(atleta.get("certificato")),
+            format="DD/MM/YYYY",
+            min_value=_dt.date(2000, 1, 1),
+            max_value=_dt.date.today() + _dt.timedelta(days=365 * 5),
+            help="Facoltativa. Svuotando il campo torna non registrata. "
+                 "L'atleta la vede nel suo Profilo e non puo' cambiarla.")
+        attivo = c10.checkbox(
+            "Attivo", value=True if nuovo else (not atleta["is_deleted"]),
+            help="Toglie o rimette la persona negli elenchi correnti. Non "
+                 "cancella niente: gare, tempi e iscrizioni gia' registrate "
+                 "restano a database e nello storico.")
 
         b1, b2 = st.columns([1, 1])
         salva = b1.form_submit_button("Salva", type="primary", use_container_width=True)
@@ -140,6 +160,8 @@ def _form(atleta: dict | None) -> None:
         "email": email,
         "is_athlete": bool(e_atleta),
         "is_staff": bool(e_staff),
+        "certificato": certificato,
+        "attivo": bool(attivo),
     }
     errori = crud.valida(dati, -1 if nuovo else int(atleta["athlete_id"]))
     if errori:
@@ -153,8 +175,17 @@ def _form(atleta: dict | None) -> None:
         st.session_state["anag_msg"] = (
             f"Atleta creato con ID {nuovo_id}: {cognome} {nome}.")
     else:
-        crud.aggiorna_atleta(int(atleta["athlete_id"]), dati)
-        st.session_state["anag_msg"] = f"Anagrafica aggiornata: {cognome} {nome}."
+        aid = int(atleta["athlete_id"])
+        crud.aggiorna_atleta(aid, dati)
+        cambio = ""
+        if bool(attivo) == bool(atleta["is_deleted"]):
+            # La spunta dice il contrario di is_deleted: lo stato e' cambiato.
+            crud.imposta_stato_atleta(aid, bool(attivo))
+            cambio = (" Ora e' attivo." if attivo else
+                      " Ora e' inattivo: resta a database con tutto il suo "
+                      "storico, ma sparisce dagli elenchi correnti.")
+        st.session_state["anag_msg"] = (
+            f"Anagrafica aggiornata: {cognome} {nome}.{cambio}")
 
     _torna_alla_lista()
     st.rerun()
@@ -246,18 +277,73 @@ tabella = pd.DataFrame({
               for a, s_ in zip(vista["is_athlete"].astype(bool),
                                vista["is_staff"].astype(bool))],
     "Attivo": ~vista["is_deleted"].astype(bool),
+    "Certificato": pd.to_datetime(vista["certificato"], errors="coerce"),
     "Gare": vista["n_gare"].astype("Int64"),
 })
+
+
+# ── Semaforo del certificato medico ───────────────────────────────
+# Si colora solo chi e' in una categoria master, cioe' M20/F20 e oltre: sotto
+# i 20 anni la FIN non assegna categoria e il certificato lo segue la societa'
+# con regole sue. Chi non ha la data registrata resta bianco: non e' una
+# scadenza vicina, e' un dato che manca, e si vede dalla cella vuota.
+STAGIONE = season_mod.current_season_year()
+_nascita = pd.to_datetime(vista["birth_date"], errors="coerce")
+_scadenza = pd.to_datetime(vista["certificato"], errors="coerce")
+_oggi = pd.Timestamp(_dt.date.today())
+
+
+def _e_master(anno) -> bool:
+    if pd.isna(anno):
+        return False
+    try:
+        return season_mod.master_band(int(anno), STAGIONE) >= 20
+    except (TypeError, ValueError):
+        return False
+
+
+_master = _nascita.dt.year.map(_e_master)
+_giorni = (_scadenza - _oggi).dt.days
+_rosse = (_master & _scadenza.notna() & (_giorni < 0)).to_numpy()
+_gialle = (_master & _scadenza.notna()
+           & (_giorni >= 0) & (_giorni < GIORNI_PREAVVISO)).to_numpy()
+
+
+def _semaforo(righe: pd.DataFrame) -> pd.DataFrame:
+    """Una riga intera per volta: stesso colore su tutte le colonne."""
+    stile = pd.DataFrame("", index=righe.index, columns=righe.columns)
+    for i, (rossa, gialla) in enumerate(zip(_rosse, _gialle)):
+        if rossa:
+            stile.iloc[i, :] = f"background-color: {ROSSO}"
+        elif gialla:
+            stile.iloc[i, :] = f"background-color: {GIALLO}"
+    return stile
+
+
 st.dataframe(
-    tabella, use_container_width=True, hide_index=True,
+    tabella.style.apply(_semaforo, axis=None),
+    use_container_width=True, hide_index=True,
     column_config={
         "Attivo": st.column_config.CheckboxColumn("Attivo", disabled=True),
         "Data di nascita": st.column_config.DateColumn("Data di nascita",
                                                        format="DD/MM/YYYY"),
+        "Certificato": st.column_config.DateColumn(
+            "Certificato", format="DD/MM/YYYY",
+            help="Scadenza del certificato medico. Vuoto = non registrata."),
         "Codice FIN": st.column_config.NumberColumn("Codice FIN", format="%d"),
         "Gare": st.column_config.NumberColumn("Gare", help="Gare individuali a DB"),
     },
 )
+
+_n_rosse, _n_gialle = int(_rosse.sum()), int(_gialle.sum())
+if _n_rosse or _n_gialle:
+    pezzi = []
+    if _n_rosse:
+        pezzi.append(f"{_n_rosse} con il certificato scaduto")
+    if _n_gialle:
+        pezzi.append(f"{_n_gialle} in scadenza entro {GIORNI_PREAVVISO} giorni")
+    st.caption("Righe colorate: " + " e ".join(pezzi) +
+               ". Il controllo vale per le categorie master, dai 20 anni in su.")
 
 # ── Azioni sulla riga ─────────────────────────────────────────────
 st.markdown('<div class="section-title">Azioni</div>', unsafe_allow_html=True)

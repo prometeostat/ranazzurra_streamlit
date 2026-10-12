@@ -524,6 +524,52 @@ a.meet-link:hover .meet-card {
 .mf-punti { font-family:'Barlow Condensed',sans-serif; font-size:11px;
             color:var(--muted); letter-spacing:0.5px; white-space:nowrap; }
 
+/* ── Bottone Iscriviti dell'agenda ──
+   Quadrato, accanto alla scheda della manifestazione: icona sopra e parola
+   sotto. Da spento resta al suo posto, solo smorzato. */
+div[class*="st-key-isc_"] .stButton button {
+    width: 92px; height: 92px; margin-left: auto; margin-right: auto;
+    border-radius: 14px; padding: 6px 4px; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; line-height: 1.1;
+}
+div[class*="st-key-isc_"] .stButton button p { margin: 0 !important; }
+div[class*="st-key-isc_"] .stButton button p:first-child {
+    font-size: 22px !important;
+}
+div[class*="st-key-isc_"] .stButton button p:last-child {
+    font-family: 'Barlow Condensed', sans-serif !important;
+    font-size: 13px !important; letter-spacing: 1px; text-transform: uppercase;
+}
+div[class*="st-key-isc_"] .stButton button:disabled {
+    opacity: 0.45; border-style: dashed;
+}
+
+/* ── Iscrizioni ──
+   La scadenza e' l'unica data che fa perdere la gara: pastiglia accesa,
+   gialla su scuro e arancio su chiaro, impossibile non vederla. */
+.isc-scadenza {
+    display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+    background:linear-gradient(90deg, rgba(240,180,41,0.22),
+               rgba(240,180,41,0.06));
+    border:1px solid var(--gold); border-left:5px solid var(--gold);
+    border-radius:12px; padding:10px 14px; margin:2px 0 12px;
+}
+.isc-scadenza-lbl { font-family:'Barlow Condensed',sans-serif; font-size:12px;
+                    letter-spacing:2px; text-transform:uppercase;
+                    color:var(--gold); }
+.isc-scadenza-data { font-family:'Bebas Neue',sans-serif; font-size:26px;
+                     letter-spacing:2px; color:var(--gold); line-height:1; }
+.isc-scadenza-coda { font-family:'Barlow Condensed',sans-serif; font-size:13px;
+                     color:var(--white); }
+
+.isc-gara { font-family:'Barlow Condensed',sans-serif; font-size:16px;
+            font-weight:600; color:var(--white); line-height:1.15; }
+.isc-sotto { font-family:'Barlow Condensed',sans-serif; font-size:12px;
+             color:var(--muted); letter-spacing:0.5px; }
+.isc-pb { color:var(--teal); }
+.isc-spenta, .isc-spenta .isc-sotto { color:var(--muted); opacity:0.55; }
+
 /* ── Confronto testa a testa ──
    Tre colonne: tempo di uno, distacco, tempo dell'altro. Sotto a ogni tempo
    data, punteggio FIN e manifestazione. Il piu' veloce sta dentro una

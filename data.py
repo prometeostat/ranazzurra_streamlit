@@ -18,7 +18,7 @@ from queries import (
     AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
     FIN_LEADERBOARD_SQL, FREQUENCY_SQL, PB_SQL, RACES_SQL, RANKING_SQL,
     SEASONS_SQL, SEASON_META_SQL, SPLITS_BY_EVENT_SQL, SPLITS_SQL, TREND_SQL,
-    con_fin,
+    ATHLETE_CERTIFICATE_SQL, con_fin,
 )
 
 TTL = 3600
@@ -257,8 +257,11 @@ def load_competition_results(comp_id: int) -> pd.DataFrame:
     arriva dalla query, qui si convertono solo i numeri.
     """
     df = query_df(COMPETITION_RESULTS_SQL, (int(comp_id),))
-    return _num(df, ("pool_length", "athlete_id", "birth_year", "time_sec",
-                     "fin_score", "dist_num"))
+    df = _num(df, ("pool_length", "athlete_id", "birth_year", "time_sec",
+                   "fin_score", "dist_num", "race_id", "session", "race_order"))
+    if "race_date" in df.columns:
+        df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
+    return df
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
@@ -267,6 +270,19 @@ def load_agenda(season_year: int) -> pd.DataFrame:
     start, end = season_mod.bounds(season_year)
     df = query_df(AGENDA_SQL, (start, end))
     return _num(df, ("comp_id", "nostre_gare", "nostri_atleti"))
+
+
+def scadenza_certificato(athlete_id: int):
+    """Scadenza del certificato medico di un atleta, o None.
+
+    Niente cache: e' un dato che l'amministratore cambia e che l'atleta
+    deve vedere aggiornato subito, ed e' una riga sola.
+    """
+    df = query_df(ATHLETE_CERTIFICATE_SQL, (int(athlete_id),))
+    if df.empty:
+        return None
+    v = df.iloc[0]["scadenza"]
+    return None if v is None or pd.isna(v) else pd.to_datetime(v).date()
 
 
 # ══════════════════════════════════════════════════════════════════

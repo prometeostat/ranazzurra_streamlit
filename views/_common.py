@@ -40,6 +40,77 @@ def stroke_filter() -> str:
     return st.session_state.get("stroke_filter", TUTTE_LE_GARE)
 
 
+# ══════════════════════════════════════════════════════════════════
+# Programma di gara: giornate e fasce orarie
+# ══════════════════════════════════════════════════════════════════
+# Le gare di una manifestazione si susseguono per giornata e per fascia
+# oraria. A database stanno in races.race_date e races.session (1 mattino,
+# 2 pomeriggio, 3 sera), tutte e due nullable: lo storico le ha vuote e
+# ricade sull'elenco piatto di sempre.
+SESSIONI = {1: "Mattino", 2: "Pomeriggio", 3: "Sera"}
+# Il nome del giorno senza passare dal locale di sistema, che su Streamlit
+# Cloud e' inglese e non si puo' dare per buono.
+GIORNI_SETTIMANA = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì",
+                    "sabato", "domenica"]
+
+
+def etichetta_giornata(quando) -> str:
+    """'sabato 21/11': il giorno della settimana dice piu' dell'anno."""
+    d = pd.to_datetime(quando, errors="coerce")
+    if pd.isna(d):
+        return ""
+    return f"{GIORNI_SETTIMANA[d.weekday()]} {d.strftime('%d/%m')}"
+
+
+def blocchi_programma(gare: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """
+    Spezza le gare in blocchi (intestazione, righe) seguendo il programma.
+
+    L'ordine arriva gia' dalla query: qui si taglia dove cambia la coppia
+    giornata/fascia, che per questo deve essere contigua. La data compare
+    nell'intestazione solo se le giornate sono piu' di una: su una
+    manifestazione di un giorno solo ripeterla a ogni blocco e' rumore.
+
+    Se nessuna gara ha il programma compilato torna un blocco unico senza
+    intestazione, cioe' l'elenco piatto di prima. Le gare senza programma
+    dentro una manifestazione che ce l'ha finiscono invece in un blocco
+    finale dichiarato, non mescolate alle altre.
+    """
+    if gare.empty:
+        return []
+
+    vuota = pd.Series([pd.NA] * len(gare), index=gare.index)
+    quando = pd.to_datetime(gare["race_date"] if "race_date" in gare.columns
+                            else vuota, errors="coerce")
+    fascia = pd.to_numeric(gare["session"] if "session" in gare.columns
+                           else vuota, errors="coerce")
+
+    if quando.isna().all() and fascia.isna().all():
+        return [("", gare)]
+
+    piu_giornate = quando.dropna().dt.date.nunique() > 1
+
+    def _titolo(giorno, numero) -> str:
+        pezzi = []
+        if piu_giornate and giorno is not None:
+            pezzi.append(etichetta_giornata(giorno).capitalize())
+        if numero in SESSIONI:
+            pezzi.append(SESSIONI[numero])
+        return " · ".join(pezzi) or "Orario non indicato"
+
+    chiavi = [(d.date() if pd.notna(d) else None,
+               int(f) if pd.notna(f) else None)
+              for d, f in zip(quando, fascia)]
+
+    blocchi: list[tuple[str, pd.DataFrame]] = []
+    inizio = 0
+    for i in range(1, len(chiavi) + 1):
+        if i == len(chiavi) or chiavi[i] != chiavi[inizio]:
+            blocchi.append((_titolo(*chiavi[inizio]), gare.iloc[inizio:i]))
+            inizio = i
+    return blocchi
+
+
 # Manifestazioni ufficiali FIN o no. A database e' competitions.is_fin, qui
 # dentro gira come None / True / False: None vuol dire "non filtrare".
 TUTTE_LE_MANIF = "Tutte"

@@ -29,7 +29,11 @@ ranazzurra_streamlit/
 │   ├── classifiche.py  top 5 per specialita', filtro categoria, M e F divisi
 │   ├── risultati.py    una manifestazione, gara per gara, con gli iscritti
 │   ├── profilo.py      account, preferiti, tema, installazione
-│   ├── gestione.py     indice dell'area riservata (solo admin)
+│   ├── iscrizioni.py   indice: nuove iscrizioni e lista
+│   ├── iscrizioni_nuove.py  l'atleta si iscrive alle gare
+│   ├── iscrizioni_mie.py    le proprie iscrizioni, per manifestazione
+│   ├── iscrizioni_admin.py  iscrizioni ricevute ed Excel (staff)
+│   ├── gestione.py     indice dell'area riservata (staff e admin)
 │   ├── anagrafica.py   anagrafica atleti (solo admin)
 │   ├── manifestazioni.py  anagrafica manifestazioni e loro gare (solo admin)
 │   └── tempi.py        inserimento tempi e punti FIN (solo admin)
@@ -296,8 +300,16 @@ scelto (gare, manifestazioni, miglior punteggio FIN); le ultime tre
 manifestazioni come blocchetti cliccabili per intero, che portano ai
 risultati ufficiali (la freccia in alto segnala il link);
 filtro periodo e vasca; elenco dei tempi raggruppato per specialita' e vasca,
-una riga per stagione, con la categoria master di quell'anno e il badge PB
-sul personale di sempre. Nessun grafico.
+con la categoria master di quell'anno e il badge PB sul personale di sempre.
+Nessun grafico.
+
+Sopra all'elenco c'e' l'interruttore **Solo il miglior tempo per stagione**,
+spento di default: cosi' si vedono tutte le gare nuotate, anche la stessa
+specialita' ripetuta piu' volte nella stessa stagione. Acceso resta una riga
+sola per specialita', vasca e stagione, con il miglior tempo di quell'anno.
+Il migliore e' sempre quello di *ogni* stagione e mai il migliore assoluto:
+altrimenti con "Tutte le stagioni" resterebbe una riga per combinazione e il
+badge PB si accenderebbe su tutte, confrontando un tempo con se stesso.
 
 I tre riquadri contano la stagione selezionata e ignorano i filtri vasca e
 gara, che valgono solo per l'elenco sotto; il filtro **Manifestazioni**
@@ -404,12 +416,21 @@ interrogare a ogni passaggio. La manifestazione mostrata resta in
 `mf_vista`; cambiando periodo o voce del menu la tabella sparisce, se no
 resterebbe appesa a una scelta che non e' piu' quella a video.
 
-Nel menu finiscono solo le manifestazioni **del periodo scelto in cui
-abbiamo gareggiato** (`nostre_gare > 0`), dalla piu' recente; il filtro
+Nel menu finiscono solo le manifestazioni **del periodo scelto in cui c'e'
+qualcosa di nostro** (`nostre_gare > 0`), dalla piu' recente; il filtro
 Periodo e' lo stesso delle altre pagine, quindi con "tutte le stagioni" c'e'
 dentro tutto lo storico. La testata ripete data, organizzatore, vasca e
 quante gare e quanti atleti nostri, con il nome che porta ai risultati
 ufficiali (`pdf_link`, con `website_link` come riserva).
+
+**Nel futuro si guarda fino a 75 giorni** (`ORIZZONTE` in
+`views/risultati.py`, la stessa soglia dell'Agenda): le manifestazioni non
+ancora nuotate ma con gente iscritta compaiono in elenco marcate *da
+nuotare*, quelle piu' in la' no, perche' non avrebbero niente da mostrare.
+Funziona perche' a database l'iscrizione e il risultato sono la stessa riga
+di `athlete_races`, una con il tempo e l'altra ancora senza, quindi
+`nostre_gare` conta gia' gli iscritti: su una manifestazione futura i tempi
+sono quelli dichiarati in iscrizione e la didascalia lo dice.
 
 La query e' `COMPETITION_RESULTS_SQL` e, a differenza del resto dell'app,
 **non filtra niente**:
@@ -422,11 +443,19 @@ La query e' `COMPETITION_RESULTS_SQL` e, a differenza del resto dell'app,
   Restano in fondo alla gara, senza posizione, con un trattino al posto del
   tempo. Sono 136 righe su 7.642, poche ma sono informazione.
 
-L'ordine arriva tutto dalla query: prima le individuali, poi le staffette,
-dentro ogni gruppo per stile e distanza e dentro la gara dal tempo migliore.
-La distanza va ordinata a numero, ma le staffette si chiamano `4x50` e
-`8x25`: il `CASE` tiene separati i due casi, cosi' il cast a intero non vede
-mai una stringa con la x.
+L'ordine arriva tutto dalla query: prima il programma (giornata, fascia,
+numero), poi le individuali e le staffette, dentro ogni gruppo per stile e
+distanza e dentro la gara dal tempo migliore. La distanza va ordinata a
+numero, ma le staffette si chiamano `4x50` e `8x25`: il `CASE` tiene
+separati i due casi, cosi' il cast a intero non vede mai una stringa con
+la x.
+
+Dove il programma e' compilato le gare escono raggruppate per **giornata e
+fascia oraria**, con un'intestazione per blocco (il giorno compare solo se
+le giornate sono piu' di una). Dove non c'e', e nello storico non c'e' mai,
+l'elenco resta piatto esattamente come prima: se ne occupa
+`blocchi_programma()` in `views/_common.py`, la stessa funzione che usano le
+iscrizioni.
 
 La categoria accanto al nome e' quella **della stagione in cui si e' nuotato
 quel tempo**, come nelle classifiche: la stagione si ricava dalla data della
@@ -439,6 +468,184 @@ Le righe non sono una tabella ma dei flex (`.mf-row` in `theme.py`): su un
 telefono quattro colonne finivano fuori schermo, cosi' invece nome e
 categoria stanno a sinistra, tempo e punti a destra. La riga di chi e'
 collegato e' accesa, come nelle classifiche.
+
+
+---
+
+## Iscrizioni alle gare
+
+L'atleta si iscrive da solo, dentro la finestra decisa dalla manifestazione.
+**Cerca > Iscrizioni** e' l'indice (`views/iscrizioni.py`) con due porte:
+
+- **Nuove iscrizioni** (`views/iscrizioni_nuove.py`, url
+  `/nuove-iscrizioni`), dove ci si iscrive;
+- **Lista iscrizioni** (`views/iscrizioni_mie.py`, url `/lista-iscrizioni`),
+  dove si guarda quello che si e' gia' fatto.
+
+Alla prima si arriva anche dal bottone **Iscriviti** in Agenda e dalla
+scorciatoia in cima a Cerca > Manifestazioni.
+
+### Lista iscrizioni
+
+Un filtro solo, che parte **vuoto** e contiene solo le manifestazioni per
+cui si e' davvero fatta un'iscrizione (le manifestazioni in programma piu'
+quelle passate con `entry_time` valorizzato). Scelta la manifestazione, la
+tabella mostra le sue gare con tipo, vasca, tempo d'iscrizione, **giornata,
+fascia oraria e numero di programma**, e quando c'e' il tempo di gara. Le
+righe seguono l'ordine in cui si nuota, con le gare senza programma in
+fondo e i trattini al posto delle tre colonne. Se la finestra e' ancora
+aperta, un bottone riporta a Nuove iscrizioni con quella manifestazione
+gia' selezionata; se e' chiusa, lo dice.
+
+### La finestra
+
+Vale `competitions.open_registration_date` e `close_registration_date`, due
+`date`, **piu' 30 giorni di anticipo**: si raccoglie dalle date di apertura
+meno trenta fino alla chiusura, estremi compresi, perche' la squadra mette
+insieme le adesioni prima di portarle sul portale federale. I giorni sono
+in `crud.GIORNI_ANTICIPO` e la stessa regola sta nelle query
+(`SIGNUP_MEETS_SQL`, `SIGNUP_WINDOW_SQL`, `MY_SIGNUPS_SQL`): se cambia il
+numero, va cambiato in tutti e due i posti.
+
+Fuori da li' non si scrive niente, e la verifica non sta nel bottone
+disabilitato: `crud.salva_iscrizioni` rilegge le date a database prima di
+toccare qualunque riga. Senza le due date la manifestazione non e'
+iscrivibile.
+
+In **Agenda > In programma** ogni manifestazione futura ha il bottone
+quadrato **Iscriviti** di fianco alla scheda, non sotto (lo stile sta in
+`theme.py`, agganciato alla chiave `isc_`). E' acceso quando si puo'
+davvero, spento e tratteggiato quando le date mancano, quando mancano piu'
+di trenta giorni all'apertura o quando la chiusura e' passata: il motivo
+sta nel tooltip. Spento resta comunque li', cosi' si vede che quella gara
+una iscrizione ce l'ha.
+
+### Come e' fatta un'iscrizione
+
+Non c'e' una tabella nuova: l'iscrizione e' la riga di `athlete_races` con
+**`entry_time`** valorizzato e `final_time` ancora vuoto. Quando la gara e'
+stata nuotata, Inserisci tempi scrive il risultato sulla riga che c'e' gia',
+senza doppioni e senza travasi. La colonna `athlete_races.entry_time`
+(`time`, nulla ammessa) e' stata aggiunta per questo; un indice unico
+parziale `ux_athlete_races_attive` su `(race_id, athlete_id)` dove
+`is_deleted = FALSE` impedisce a database la doppia iscrizione alla stessa
+gara.
+
+Il tempo d'iscrizione si scrive **mm:ss.dd** (`01:12.35`); sotto il minuto
+basta `29.45` e la virgola al posto del punto e' accettata. Si puo' anche
+lasciare vuoto. Il formato lo controlla `crud.tempo_da_testo`, lo stesso di
+Inserisci tempi.
+
+### Il personale, gia' nel campo
+
+Il miglior tempo dell'atleta sulla stessa specialita' **e nella stessa
+vasca** finisce dritto nel campo del tempo d'iscrizione, modificabile. Chi
+non tocca niente si iscrive col suo personale; chi svuota il campo lo
+stesso, perche' al salvataggio il personale torna come valore di ripiego
+(lo fa `crud.salva_iscrizioni`, non solo l'interfaccia). Senza personale il
+campo resta vuoto e l'iscrizione parte senza tempo.
+
+Il personale e' solo delle prove individuali gia' nuotate, con la vasca
+giusta: un 50 stile in vasca da 25 non dice niente su un 50 stile in vasca
+da 50, e il `LEFT JOIN LATERAL` della query filtra su `r2.pool_length =
+r.pool_length`. Accanto al nome della gara resta scritto come promemoria.
+
+### Il limite di gare individuali
+
+Arriva da `competitions.max_races_per_athlete`, niente numeri fissi nel
+codice, ed e' **un blocco, non un avviso**: raggiunto il massimo, le gare
+non ancora scelte si spengono e per cambiarne una bisogna prima toglierne
+un'altra. Per questo l'elenco non e' una griglia editabile ma una casella
+per gara: una cella di `st.data_editor` non si puo' disabilitare da sola.
+La stessa regola e' ricontrollata lato server prima di scrivere.
+
+**Le staffette non contano**: si riconoscono da `race_events.is_relay`, non
+dal nome della gara. Se il limite e' nullo o zero vuol dire che non e'
+stato dichiarato e non si limita niente, scritto in chiaro nella testata.
+
+La data di chiusura sta in una pastiglia dorata sotto la testata, con i
+giorni che mancano: e' l'unica data che fa perdere la gara.
+
+### L'ordine delle gare individuali
+
+Le gare individuali sono raggruppate per **giornata e fascia oraria**,
+nell'ordine in cui si nuotano, con un'intestazione per blocco: *Mattino*,
+*Pomeriggio*, *Sera*, e con il giorno davanti quando la manifestazione dura
+piu' di una giornata. L'informazione viene dal programma della
+manifestazione (vedi Anagrafica manifestazioni, Il programma); le gare per
+cui non e' stato compilato finiscono in un blocco finale "Orario non
+indicato", e se non e' compilato per nessuna l'elenco resta piatto come
+prima. Le staffette hanno un elenco loro, raggruppato allo stesso modo: i
+blocchi si calcolano sulle sole staffette, quindi le fasce sono le loro.
+
+### Staffette
+
+Sono gare a parte e stanno in un elenco loro: l'atleta da' solo la
+**disponibilita'**, senza tempo d'iscrizione, perche' squadre e frazioni le
+decide l'allenatore. Restano fuori dal limite delle individuali.
+
+### Modifica, cancellazione e permessi
+
+Finche' la finestra e' aperta l'atleta cambia i tempi, aggiunge e toglie
+gare; la cancellazione e' la solita soft delete. Una gara che ha gia' il
+**tempo di gara** non si puo' togliere da qui: l'app lo dice e manda
+dall'amministratore. A finestra chiusa resta l'elenco **Le mie iscrizioni**,
+in sola lettura.
+
+Il salvataggio **rilegge lo stato a database un attimo prima di scrivere**,
+senza passare dal cache: fra il momento in cui la pagina ha caricato le gare
+e il momento in cui si conferma puo' essere entrata una riga da un'altra
+scheda del browser, da un altro dispositivo o da Inserisci tempi. Su quella
+rilettura si decide gara per gara: niente a database si inserisce, riga
+attiva si aggiorna il tempo, riga tolta prima si rimette in piedi quella
+invece di crearne una seconda. L'inserimento porta anche un `ON CONFLICT`
+sull'indice unico, che fa da rete se la riga nasce proprio in quell'istante:
+aggiorna il tempo invece di fallire. E se qualcosa va storto a database
+l'atleta vede un messaggio, non un traceback.
+
+L'id dell'atleta arriva da `auth.current_user()`, cioe' dalla sessione
+creata al login, mai da un widget o dall'indirizzo; prima di modificare o
+cancellare una riga, `crud` ricontrolla a database che sia davvero sua. Un
+allenatore senza scheda atleta non vede la pagina: non ha gare da nuotare.
+
+---
+
+## Gestione > Iscrizioni gare
+
+I numeri dei riquadri dell'indice Gestione arrivano da una query sola
+(`GESTIONE_CONTEGGI_SQL`): prima erano quattro letture separate e le schede
+comparivano a scaglioni, una per ogni risposta del database.
+
+Primo widget di Gestione, aperto ad **allenatori e amministratore**
+(`auth.is_staff()`), mentre anagrafiche, tempi e registro accessi restano
+dell'amministratore. Nel menu ci sono **solo le manifestazioni dalla data
+di oggi in avanti**: le iscrizioni di una gara passata non servono piu' a
+organizzare niente, e per i risultati c'e' Inserisci tempi. Si sceglie la
+manifestazione e si vede chi si e' iscritto. In cima tre numeri (atleti,
+gare individuali, frazioni di staffetta), un avviso per chi ha superato il
+limite di gare, filtro per tipo di gara e ricerca libera.
+
+La tabella ha sei colonne, quelle che servono a bordo vasca: **Atleta,
+Gara, Tempo iscrizione, Giornata, Fascia, N.** Le righe seguono **l'ordine
+del programma** (giornata, fascia, numero) e dentro vanno per cognome: si
+legge scorrendo le gare come si nuotano. Le gare per cui il programma non e'
+stato compilato finiscono in fondo con i trattini. Il tipo di gara e la
+vasca non ci sono piu' come colonne: il tipo e' nel filtro qui sopra e la
+vasca e' della manifestazione, non della singola riga.
+
+Il bottone **Scarica le iscrizioni in Excel** produce un `.xlsx` con le
+righe mostrate, filtri compresi, e le stesse colonne della tabella piu' il
+nome della manifestazione davanti: **Manifestazione, Atleta, Gara, Tempo
+iscrizione, Giornata, Fascia, N.** I tempi nel foglio sono tutti in
+`mm:ss.dd` e la giornata e' testo `gg/mm/aaaa`, cosi' le colonne si ordinano
+senza dipendere dalle impostazioni locali di Excel; il numero di programma
+invece e' un intero vero. La prima riga e' bloccata e le larghezze sono
+calcolate sul contenuto. Il file si costruisce in memoria con
+`pandas.ExcelWriter` e `openpyxl` (unica dipendenza aggiunta,
+`openpyxl==3.1.5` in `requirements.txt`).
+
+Qui dentro non si scrive niente: le correzioni passano da Inserisci tempi o
+dall'atleta, finche' la finestra e' aperta.
 
 ---
 
@@ -563,6 +770,22 @@ e quanti nostri atleti c'erano, e il link al programma PDF quando c'e'.
 Delle concluse si mostrano le ultime cinque, le altre si trovano
 restringendo il periodo o con la ricerca.
 
+**In programma guarda 75 giorni avanti** (`ORIZZONTE` in `views/agenda.py`).
+Oltre quella soglia le manifestazioni restano a database ma non affollano la
+lista: a sei mesi di distanza non c'e' niente da decidere. La soglia e' 75 e
+non meno perche' deve coprire l'apertura delle iscrizioni, che sulle gare a
+calendario parte fra i 50 e i 65 giorni prima della gara (30 giorni di
+anticipo sull'apertura ufficiale): piu' stretta, e il bottone Iscriviti
+sparirebbe proprio nei giorni in cui serve.
+
+Due eccezioni. La ricerca per nome scavalca la finestra, perche' chi scrive
+"Belluno" vuole trovare quella gara, non sentirsi dire che non c'e'. E una
+manifestazione gia' aperta alle iscrizioni resta in elenco anche se e' piu'
+in la': con 75 giorni oggi non capita mai, ma e' la rete che tiene se un
+domani una gara apre le adesioni con piu' anticipo. Il controllo e' lo
+stesso di `_stato_iscrizioni`, quello che decide se il bottone e'
+cliccabile, cosi' le due cose non possono divergere.
+
 Attenzione a come sono fatti i dati: a database arrivano solo le
 manifestazioni dove abbiamo gia' gareggiato, perche' le porta lo scraper dei
 risultati. Oggi sono 524 e **nessuna e' futura**: l'ultima e' del 12/09/2026.
@@ -580,7 +803,68 @@ cognome, nome, codice FIN ed e-mail, ordinamento sugli stessi campi piu'
 quello nativo della tabella cliccando le intestazioni.
 
 Campi gestiti: ID (assegnato dal database, non modificabile), codice FIN,
-nome, cognome, sesso, data di nascita, e-mail e lo stato **Attivo**.
+nome, cognome, sesso, data di nascita, e-mail, i due ruoli, la **scadenza
+del certificato medico** e lo stato **Attivo**.
+
+### Atleta, allenatore o tutti e due
+
+Nel form ci sono due spunte che decidono cosa e' quella persona. **Atleta**
+la fa comparire nei selettori, nelle classifiche e nei conteggi, ed e'
+spuntata di default. **Allenatore o staff** le da' il ruolo di allenatore e
+le permette di entrare nell'app. Le combinazioni valide sono tre: solo
+atleta, il caso normale; solo allenatore, e allora l'e-mail diventa
+obbligatoria perche' e' l'unico modo che ha per entrare; tutti e due, per
+l'allenatore che gareggia anche lui, che resta visibile ovunque come
+qualsiasi altro atleta. Nessuna delle due spuntate non si salva.
+
+A database sono due colonne aggiunte ad `athletes`, `is_athlete` con default
+`true` e `is_staff` con default `false`, quindi le 268 righe gia' presenti
+continuano a comportarsi esattamente come prima. L'elenco ha un filtro per
+ruolo e una colonna che dice chi e' cosa.
+
+### Attivo, nel form
+
+La spunta **Attivo** si cambia direttamente nel form, in creazione e in
+modifica, e non solo con i pulsanti dell'elenco. Un atleta nuovo nasce
+attivo; togliendo la spunta nasce gia' inattivo, utile per caricare qualcuno
+che per questa stagione non c'e'. In modifica, se la spunta cambia, il
+salvataggio chiama le stesse funzioni di sempre
+(`crud.imposta_stato_atleta`, che gira su `disattiva_atleta` e
+`riattiva_atleta`) cosi' i campi di cancellazione restano scritti come si
+deve, e il messaggio dice cosa e' successo.
+
+Disattivare non cancella niente: gare, tempi, iscrizioni e storico restano
+a database. L'atleta sparisce dagli elenchi correnti e dai selettori, ma le
+classifiche storiche continuano a mostrarlo, e **l'import dei risultati non
+guarda lo stato**: un risultato vecchio di chi ha smesso si carica lo
+stesso.
+
+### Certificato medico
+
+`athletes.medical_certificate_expiry` (`date`, nulla ammessa) tiene la
+scadenza. Nel form e' un campo data facoltativo in formato `gg/mm/aaaa`:
+svuotandolo torna non registrata (`NULL`), e nell'elenco c'e' la colonna
+**Certificato**. L'atleta la vede nel suo **Profilo** e non puo' cambiarla:
+la legge una query mirata sul suo solo id. Il giorno della scadenza vale
+ancora. Nessun blocco automatico sulle iscrizioni: il certificato si
+registra e si guarda, non impedisce niente finche' non lo si chiede
+esplicitamente.
+
+**Il semaforo.** Nell'elenco la riga dell'atleta si colora di rosso se il
+certificato e' scaduto e di giallo se scade entro 60 giorni
+(`GIORNI_PREAVVISO`); sotto la tabella una riga dice quanti sono. Vale solo
+per chi e' in una categoria master, cioe' **M20/F20 e oltre**: sotto i venti
+anni la FIN non assegna categoria e il certificato lo segue la societa' con
+regole sue, quindi colorare quelle righe sarebbe un falso allarme. Chi non
+ha la data registrata resta bianco: non e' una scadenza vicina, e' un dato
+che manca, e si vede dalla cella vuota. Le tinte sono rgba esplicite e non
+`var(--…)`: lo Styler finisce nel grid di Streamlit, che le variabili CSS
+del tema non le risolve.
+
+Nel **Profilo** la stessa scala a tre colori sul riquadro del certificato:
+verde in corso di validita', giallo da 60 giorni alla scadenza (con i giorni
+che mancano, "Scade oggi", "Scade domani"), rosso scaduto con da quanto, e
+grigio quando la data non c'e'.
 
 **Elimina non cancella.** La soft delete mette `is_deleted = TRUE` e riempie
 `deletion_user_id` e `deletion_utc_date_time`; gare, risultati e storico
@@ -601,15 +885,22 @@ Note sullo schema, verificate sul DB prima di scrivere il codice:
 - `company_id` non e' fra i campi editabili: i nuovi atleti ereditano la
   societa' piu' diffusa in anagrafica, che oggi e' Ranazzurra Conegliano.
 
+Sotto alle azioni c'e' il riquadro **Accesso all'app**: stato della password
+dell'atleta selezionato, data dell'ultimo accesso e i tre bottoni per
+azzerare la password, generare una temporanea o sospendere l'accesso. Chi non
+ha un'e-mail in anagrafica non puo' entrare, e il riquadro lo dice.
+
 ## Anagrafica manifestazioni
 
 Stesso schema dell'anagrafica atleti, riservata all'amministratore. Campi:
 nome (`competitions.type`), date di inizio e fine, apertura e chiusura
 iscrizioni, cronometraggio (tendina con i valori gia' presenti a database),
-massimo gare per atleta, link al sito e al PDF, spunta **Manifestazione
-ufficiale FIN** (vedi la sezione Gare ufficiali FIN). Filtri per stato, per
-passato/futuro e ricerca sul nome; nell'elenco la colonna FIN dice a colpo
-d'occhio quali sono le ufficiali.
+massimo gare per atleta, **organizzatore**, link al sito e al PDF, spunta
+**Manifestazione ufficiale FIN** (vedi la sezione Gare ufficiali FIN). Filtri
+per stato, per passato/futuro e ricerca sul nome; nell'elenco la colonna FIN
+dice a colpo d'occhio quali sono le ufficiali. Accanto a **Nuova** c'e'
+**Clona**, che riparte da un'edizione passata portandosi dietro il programma
+gare.
 
 Anche qui "Elimina" e' una soft delete: `is_deleted = TRUE`. La
 manifestazione sparisce da agenda, schede e classifiche, ma le gare e i
@@ -637,30 +928,85 @@ specialita' puo' ripetersi nella stessa manifestazione, ed e' normale:
 maschi e femmine sono due gare distinte, oggi sono 628 le combinazioni che
 si ripetono.
 
+Una cosa dello schema da ricordare: `races` non ha le colonne di ultima
+modifica (ci sono solo `creation_*` e `deletion_user_id`), quindi chi
+rinomina o sposta una gara non viene tracciato. Metterci
+`last_modification_user_id` sarebbe una modifica di schema a parte.
+
 **Eliminare una gara con dei tempi dentro non si puo'.** L'app dice quanti
 sono e manda a Inserisci tempi: cancellare la gara porterebbe via dieci
 risultati in un colpo solo senza che si veda. Sulla gara vuota la soft
 delete e' quella di sempre.
 
+### Il programma: giornate, fasce e ordine
 
-Nel form ci sono due spunte che decidono cosa e' quella persona. **Atleta**
-la fa comparire nei selettori, nelle classifiche e nei conteggi, ed e' spuntata
-di default. **Allenatore o staff** le da' il ruolo di allenatore e le permette
-di entrare nell'app. Le combinazioni valide sono tre: solo atleta, il caso
-normale; solo allenatore, e allora l'e-mail diventa obbligatoria perche' e'
-l'unico modo che ha per entrare; tutti e due, per l'allenatore che gareggia
-anche lui, che resta visibile ovunque come qualsiasi altro atleta. Nessuna
-delle due spuntate non si salva.
+Le gare di una manifestazione si susseguono per giornata e per fascia
+oraria. In una giornata ci possono essere solo il mattino, solo il
+pomeriggio, mattino e pomeriggio oppure pomeriggio e sera, e la
+manifestazione puo' durare un giorno solo (`start_date = end_date`) o
+diversi. A database sono tre colonne su `races`, tutte nullable:
+`race_date` (la giornata), `session` (1 mattino, 2 pomeriggio, 3 sera, con
+un CHECK che lo tiene fra 1 e 3) e `race_order` (il numero di programma
+dentro la fascia, CHECK maggiore di zero).
 
-A database sono due colonne aggiunte ad `athletes`, `is_athlete` con default
-`true` e `is_staff` con default `false`, quindi le 268 righe gia' presenti
-continuano a comportarsi esattamente come prima. L'elenco ha un filtro per
-ruolo e una colonna che dice chi e' cosa.
+Si compilano dal riquadro **Programma: giornate, fasce e ordine**, dentro
+Modifica manifestazione sotto l'elenco delle gare: una griglia con tutte le
+gare e tre colonne editabili, si sistema il programma e si salva in un colpo
+solo. Il salvataggio tocca solo quelle tre colonne, quindi non puo' rovinare
+nome, vasca o specialita'; le giornate fuori dalle date della manifestazione
+vengono rifiutate prima di scrivere, e il controllo sta nell'app perche' un
+CHECK su due tabelle vorrebbe un trigger. Il form della singola gara non li
+mostra ma se li ricopia: salvando il nome di una gara il suo posto nel
+programma resta dov'era.
 
-Sotto alle azioni c'e' il riquadro **Accesso all'app**: stato della password
-dell'atleta selezionato, data dell'ultimo accesso e i tre bottoni per
-azzerare la password, generare una temporanea o sospendere l'accesso. Chi non
-ha un'e-mail in anagrafica non puo' entrare, e il riquadro lo dice.
+**Lo storico resta vuoto e va benissimo cosi'.** Tutte le 2.964 gare gia' a
+database hanno le tre colonne nulle: negli elenchi finiscono in fondo, sotto
+l'intestazione "Orario non indicato", e se nessuna gara della manifestazione
+ha il programma non compare nessuna intestazione, l'elenco e' identico a
+prima. Non sono state dedotte da niente: a database non c'era nessun orario,
+l'unica traccia sarebbe stato l'id di inserimento, e sarebbe stata
+un'invenzione presentata come dato.
+
+Dove si vede: nelle **Nuove iscrizioni**, dove le gare individuali sono
+raggruppate per giornata e fascia nell'ordine in cui si nuotano, e in
+**Cerca > Manifestazioni**. La data compare nell'intestazione solo se le
+giornate sono piu' di una. Clonando una manifestazione fascia e ordine si
+copiano, la giornata no: le date cambiano e si rimettono dal Programma.
+
+### Clona
+
+Il bottone **⧉ Clona**, accanto a Nuova, ricopia un'edizione passata con il
+suo programma gare: quasi sempre e' quella dell'anno scorso, per cui la
+manifestazione da cui partire si sceglie dentro la pagina di clonazione e non
+dall'elenco, che con i filtri attivi potrebbe non averla nemmeno a video.
+
+Dalla sorgente arrivano nome, cronometraggio, massimo gare per atleta,
+organizzatore e la spunta FIN; le quattro date arrivano **spostate di un
+anno** (il 29 febbraio diventa il 28) e sono tutte correggibili prima di
+salvare. I due link restano vuoti apposta: quelli dell'edizione vecchia
+puntano a un programma che non vale piu'.
+
+Il programma gare e' una tabella editabile con quattro colonne: **Copia**,
+che si toglie alle gare che quest'anno non si fanno, **Gara**, **Vasca** e
+**Specialita'**. Le gare senza nome proprio arrivano con il nome della
+specialita'. Se una riga spuntata resta senza nome, senza specialita' o con
+una vasca diversa da 25 e 50, l'app lo dice e non salva niente: meglio
+fermarsi che creare una manifestazione mezza vuota.
+
+**Si copia solo la struttura, mai i risultati.** I tempi restano attaccati
+all'edizione in cui sono stati nuotati: la copia nasce con le sue gare e
+zero iscritti. Alla fine il messaggio dice da dove si e' partiti, qual e'
+l'ID nuovo e quante gare sono state create.
+
+### Organizzatore
+
+`competitions.organizer_company_id` punta a `companies` ed e' nullable: buona
+parte dello storico ce l'ha davvero vuoto, quindi la tendina ha lo zero che
+fa da "—", non indicato. Se la societa' agganciata non e' piu' nell'elenco,
+perche' disattivata o senza nome, resta comunque in tendina marcata **fuori
+elenco**, cosi' salvando la manifestazione non si perde un riferimento buono.
+Il nome finisce nell'elenco dell'anagrafica, in Agenda sotto il nome della
+manifestazione e nella testata dei risultati.
 
 ---
 

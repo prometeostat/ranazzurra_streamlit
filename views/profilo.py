@@ -6,6 +6,8 @@ non c'e' piu': la navigazione e' la barra in basso.
 """
 from __future__ import annotations
 
+import datetime as _dt
+
 import pandas as pd
 import streamlit as st
 
@@ -46,6 +48,42 @@ ruolo = {"admin": "Amministratore", "allenatore": "Allenatore"}.get(
     user.get("role", ""), "Atleta")
 st.caption(f"Sei collegato come {user.get('full_name', '—')} · {ruolo}"
            + (f" · id {int(mio)}" if mio is not None else "") + ".")
+
+# ── Certificato medico ────────────────────────────────────────────
+# Sola lettura: la data la registra l'amministratore da Anagrafica atleti.
+# La riga si legge dal database per il solo id della sessione, non da un
+# elenco di tutti: nessuno puo' farsi dare la scadenza di un altro.
+GIORNI_PREAVVISO = 60      # come in Anagrafica atleti
+
+if mio is not None:
+    scadenza = data.scadenza_certificato(int(mio))
+    if scadenza is None:
+        testo, colore = "Scadenza certificato medico non registrata", "--muted"
+        dettaglio = "La registra l'amministratore in anagrafica."
+    else:
+        oggi = _dt.date.today()
+        giorni = (scadenza - oggi).days    # il giorno di scadenza vale ancora
+        testo = f"Scadenza certificato medico · {scadenza.strftime('%d/%m/%Y')}"
+        if giorni < 0:
+            colore = "--red"
+            quanti = -giorni
+            dettaglio = ("Scaduto ieri" if quanti == 1
+                         else f"Scaduto da {quanti} giorni")
+        elif giorni < GIORNI_PREAVVISO:
+            colore = "--gold"
+            dettaglio = ("Scade oggi" if giorni == 0 else
+                         "Scade domani" if giorni == 1 else
+                         f"In scadenza fra {giorni} giorni")
+        else:
+            colore = "--green"
+            dettaglio = "In corso di validità"
+    st.markdown(
+        f'''<div class="glass-card" style="border-left:4px solid var({colore})">
+          <div class="ag-nome">{testo}</div>
+          <div class="ag-meta">{dettaglio}</div>
+        </div>''', unsafe_allow_html=True)
+    st.caption("La scadenza la aggiorna l'amministratore da Gestione, "
+               "Anagrafica atleti: da qui si legge soltanto.")
 
 # ── Preferiti ─────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Preferiti</div>', unsafe_allow_html=True)

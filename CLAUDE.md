@@ -46,6 +46,30 @@ in `views/_common.py`). Le pagine admin si registrano solo se
   ogni 50 m anche in vasca da 25. Dal 2024/25 non ci sono parziali.
 - `fin_score` si prende com'e' dai risultati ufficiali, non va ricalcolato
   ne' "corretto".
+- L'iscrizione a una gara e' la stessa riga del risultato: `athlete_races`
+  con `entry_time` valorizzato e `final_time` ancora vuoto. Indice unico
+  parziale `ux_athlete_races_attive` su `(race_id, athlete_id)` dove
+  `is_deleted = FALSE`: niente doppia iscrizione.
+- Le staffette sono gare a parte (`race_events.is_relay`): fuori dal limite
+  `competitions.max_races_per_athlete`, e nelle iscrizioni senza tempo.
+- Il programma di gara sta su `races`: `race_date` (giornata), `session`
+  (1 mattino, 2 pomeriggio, 3 sera, con CHECK) e `race_order` (numero dentro
+  la fascia, CHECK > 0). Tutte e tre nullable e vuote su tutto lo storico.
+  L'ordinamento va fatto con il frammento `queries.ORDINE_PROGRAMMA`, che
+  mette i NULL in fondo e lascia ricadere le gare senza programma
+  sull'ordine di sempre; a video i blocchi li costruisce
+  `views/_common.blocchi_programma()`, usata sia dalle iscrizioni sia dai
+  risultati di manifestazione.
+- `athletes.medical_certificate_expiry` (`date`, nulla ammessa) e' la
+  scadenza del certificato medico: la scrive solo l'anagrafica, il Profilo
+  la legge con una query sul solo id della sessione.
+- **Le colonne di audit non ci sono su tutte le tabelle.** `races` ha solo
+  `creation_*` e `deletion_user_id`: niente `last_modification_*`.
+  `athlete_races` e `competitions` hanno `last_modification_user_id` ma non
+  la data. Complete solo `athletes`, `split_times` e
+  `athlete_credentials`. In `information_schema` le posizioni mancanti
+  restano vuote, quindi una lettura parziale inganna: prima di scrivere una
+  UPDATE va guardato l'elenco completo delle colonne di quella tabella.
 - Il DB contiene solo tesserati Ranazzurra e niente posizione in gara: le
   classifiche sono interne.
 - Le sigle `RANAZZURRA CONEGLIANO` e `RANAZZURRA` sono la stessa squadra.
@@ -62,8 +86,31 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - Valori da `st.data_editor` con colonne `Int64` arrivano come `pd.NA`:
   controllare con `pd.isna()` prima di `or` / `in`. Ci sono gia' gli helper
   `crud._intero`, `crud._testo` e quelli in `views/manifestazioni.py`.
-- `crud._pulisci_manifestazione()` restituisce 10 valori; insert usa 11
-  placeholder e update 12. Toccando la tupla vanno ricontati tutti e tre.
+- `crud._pulisci_manifestazione()` restituisce 11 valori (gli ultimi due sono
+  `is_fin` e `organizer_company_id`); insert usa 12 placeholder e update 13.
+  Toccando la tupla vanno ricontati tutti e tre.
+  Stessa attenzione per gli atleti: insert 12 placeholder, update 11.
+- `crud.crea_gara()` svuota la cache, `crud._inserisci_gara()` no: la
+  clonazione ne crea molte di fila e la svuota una volta alla fine.
+- `RACE_UPDATE_SQL` riscrive anche giornata, fascia e ordine: il form della
+  singola gara deve ricopiarli dalla riga che sta modificando, se no
+  salvando il nome si azzera il programma. Per la sola griglia del programma
+  c'e' `RACE_PROGRAM_UPDATE_SQL`, che tocca quelle tre colonne e basta.
+- La soglia dei 60 giorni per il certificato medico e i colori del semaforo
+  stanno in `views/anagrafica.py` e `views/profilo.py` (`GIORNI_PREAVVISO`).
+  Nella tabella sono tinte rgba esplicite, non `var(--…)`: lo Styler finisce
+  nel grid, che le variabili CSS del tema non le risolve.
+- Le regole delle iscrizioni (finestra aperta, limite individuali,
+  proprieta' della riga) stanno in `crud.salva_iscrizioni` e rileggono il
+  database: l'interfaccia disabilita i bottoni, non autorizza.
+- **Una lettura cachata non e' una rilettura.** Prima di scrivere, lo stato
+  va preso da una query senza cache: `crud._stato_a_database` per le
+  iscrizioni. Decidere insert/update sull'`entry_id` che arriva dalla pagina
+  (fotografia vecchia fino a 60 s) faceva sbattere l'INSERT contro
+  `ux_athlete_races_attive` quando la riga nasceva altrove nel frattempo.
+  `SIGNUP_INSERT_SQL` ha anche un `ON CONFLICT … DO UPDATE` sull'indice
+  parziale come rete, e un'iscrizione tolta prima si riattiva con
+  `ENTRY_REACTIVATE_SQL` invece di crearne una nuova.
 - Plotly: niente colori `#rrggbbaa`, usare `rgba()`; attenzione ai kwargs
   duplicati negli helper di layout.
 - CSS iniettato con `st.html()`: nel testo **nessuna parentesi angolare**,
@@ -154,3 +201,21 @@ in sola lettura; per l'interfaccia una prova headless con Playwright su
 La cartella vive su Google Drive (`G:\Il mio Drive\Job\ranazzurra\
 ranazzurra_streamlit`). Da sessione cloud la shell sul PC non la monta: si
 lavora con stage e commit dei file. Commit e push su git li fa Mirko.
+
+**Prima di riscrivere un file sul Drive va sempre riletto da li'.** Piu'
+sessioni lavorano sullo stesso progetto: una copia in cache vecchia di due
+giorni, ricommittata intera, cancella in silenzio quello che ha scritto
+qualcun altro nel frattempo. E' gia' successo con Clona, l'organizzatore
+delle manifestazioni e l'interruttore della scheda atleta, recuperati poi dal
+commit `b7611ba`. Si confrontano le dimensioni e si fa un diff, non si
+sovrascrive a scatola chiusa.
+
+## Funzioni da non perdere
+
+Elenco di controllo per chi riscrive questi file, perche' sono arrivate da
+sessioni diverse: **Clona manifestazione + gare** e **tendina Organizzatore**
+in `views/manifestazioni.py` (con `clona_manifestazione` in `crud.py` e
+`organizer_company_id` nelle tre query delle manifestazioni),
+**interruttore "Solo il miglior tempo per stagione"** in `views/scheda.py`,
+**sezione Gare** dentro Modifica manifestazione, **flag FIN**, e tutta la
+parte **iscrizioni** (`views/iscrizioni*.py`).
