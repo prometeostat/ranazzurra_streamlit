@@ -9,6 +9,7 @@ propone Riattiva.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 
 import pandas as pd
 import streamlit as st
@@ -22,11 +23,6 @@ STATI = ["Attivi", "Inattivi", "Tutti"]
 # Il certificato si segnala in anticipo: giallo da qui in giu', rosso quando
 # la data e' passata. Il giorno della scadenza vale ancora.
 GIORNI_PREAVVISO = 60
-# Tinte semitrasparenti: lo Styler finisce nel grid, che non risolve le
-# variabili CSS del tema, quindi i colori vanno scritti per esteso. Al 28%
-# restano leggibili sia sul fondo scuro sia su quello chiaro.
-ROSSO = "rgba(255,77,109,0.34)"
-GIALLO = "rgba(240,180,41,0.34)"
 RUOLI = ["Tutti", "Atleti", "Allenatori e staff"]
 ORDINAMENTI = {
     "Cognome": "last_name",
@@ -264,29 +260,15 @@ if vista.empty:
     st.info("Nessun atleta con questi filtri.")
     st.stop()
 
-tabella = pd.DataFrame({
-    "ID": vista["athlete_id"].astype(int),
-    "Codice FIN": vista["fin_code"].astype("Int64"),
-    "Cognome": vista["last_name"],
-    "Nome": vista["first_name"],
-    "Sesso": vista["sex"].map({True: "M", False: "F"}),
-    "Data di nascita": vista["birth_date"],
-    "E-Mail": vista["email"],
-    "Ruolo": [("Atleta e allenatore" if a and s_ else
-               "Allenatore" if s_ else "Atleta")
-              for a, s_ in zip(vista["is_athlete"].astype(bool),
-                               vista["is_staff"].astype(bool))],
-    "Attivo": ~vista["is_deleted"].astype(bool),
-    "Certificato": pd.to_datetime(vista["certificato"], errors="coerce"),
-    "Gare": vista["n_gare"].astype("Int64"),
-})
-
-
 # ── Semaforo del certificato medico ───────────────────────────────
-# Si colora solo chi e' in una categoria master, cioe' M20/F20 e oltre: sotto
+# Vale solo per chi e' in una categoria master, cioe' M20/F20 e oltre: sotto
 # i 20 anni la FIN non assegna categoria e il certificato lo segue la societa'
-# con regole sue. Chi non ha la data registrata resta bianco: non e' una
-# scadenza vicina, e' un dato che manca, e si vede dalla cella vuota.
+# con regole sue. Chi non ha la data registrata resta senza pallino: non e'
+# una scadenza vicina, e' un dato che manca, e si vede dalla cella vuota.
+#
+# E' un pallino in colonna e non piu' la riga colorata perche' la tabella e'
+# diventata editabile: st.data_editor non accetta uno Styler, quindi o si
+# colora o si scrive. L'informazione resta, cambia il modo di mostrarla.
 STAGIONE = season_mod.current_season_year()
 _nascita = pd.to_datetime(vista["birth_date"], errors="coerce")
 _scadenza = pd.to_datetime(vista["certificato"], errors="coerce")
@@ -307,43 +289,123 @@ _giorni = (_scadenza - _oggi).dt.days
 _rosse = (_master & _scadenza.notna() & (_giorni < 0)).to_numpy()
 _gialle = (_master & _scadenza.notna()
            & (_giorni >= 0) & (_giorni < GIORNI_PREAVVISO)).to_numpy()
+_verdi = (_master & _scadenza.notna()
+          & (_giorni >= GIORNI_PREAVVISO)).to_numpy()
+_pallini = ["🔴" if r else "🟡" if g else "🟢" if v else ""
+            for r, g, v in zip(_rosse, _gialle, _verdi)]
 
+tabella = pd.DataFrame({
+    "ID": vista["athlete_id"].astype(int),
+    "": _pallini,
+    "Codice FIN": vista["fin_code"].astype("Int64"),
+    "Cognome": vista["last_name"].fillna("").astype(str),
+    "Nome": vista["first_name"].fillna("").astype(str),
+    "Sesso": vista["sex"].map({True: "M", False: "F"}),
+    "Data di nascita": pd.to_datetime(vista["birth_date"], errors="coerce"),
+    "E-Mail": vista["email"].fillna("").astype(str),
+    "Atleta": vista["is_athlete"].astype(bool),
+    "Staff": vista["is_staff"].astype(bool),
+    "Attivo": ~vista["is_deleted"].astype(bool),
+    "Certificato": pd.to_datetime(vista["certificato"], errors="coerce"),
+    "Gare": vista["n_gare"].astype("Int64"),
+}).reset_index(drop=True)
 
-def _semaforo(righe: pd.DataFrame) -> pd.DataFrame:
-    """Una riga intera per volta: stesso colore su tutte le colonne."""
-    stile = pd.DataFrame("", index=righe.index, columns=righe.columns)
-    for i, (rossa, gialla) in enumerate(zip(_rosse, _gialle)):
-        if rossa:
-            stile.iloc[i, :] = f"background-color: {ROSSO}"
-        elif gialla:
-            stile.iloc[i, :] = f"background-color: {GIALLO}"
-    return stile
+st.caption("La tabella si modifica direttamente: scrivi nelle celle e premi "
+           "**Salva le modifiche** prima di cambiare filtro o ordinamento, "
+           "se no le correzioni non salvate si perdono. ID e Gare non si "
+           "toccano, e per aggiungere qualcuno c'è ＋ Nuovo atleta. Il "
+           "pallino dice come sta il certificato: 🔴 scaduto, 🟡 in scadenza "
+           f"entro {GIORNI_PREAVVISO} giorni, 🟢 in regola; vale per le "
+           "categorie master, dai 20 anni in su.")
 
+# La chiave porta dentro gli id mostrati, e non e' un vezzo: st.data_editor
+# tiene le celle toccate per POSIZIONE di riga, non per contenuto. Con una
+# chiave fissa, cambiando filtro o ordinamento la modifica lasciata in
+# sospeso sulla terza riga si riapplicherebbe a chiunque finisca terzo dopo.
+# Cambiando le righe cambia la chiave, e si riparte puliti.
+_impronta = hashlib.md5(
+    ",".join(str(i) for i in vista["athlete_id"]).encode()).hexdigest()[:10]
 
-st.dataframe(
-    tabella.style.apply(_semaforo, axis=None),
-    use_container_width=True, hide_index=True,
+modificata = st.data_editor(
+    tabella, key=f"anag_griglia_{_impronta}", hide_index=True,
+    use_container_width=True, num_rows="fixed",
     column_config={
-        "Attivo": st.column_config.CheckboxColumn("Attivo", disabled=True),
-        "Data di nascita": st.column_config.DateColumn("Data di nascita",
-                                                       format="DD/MM/YYYY"),
+        "ID": st.column_config.NumberColumn("ID", disabled=True, format="%d"),
+        "": st.column_config.TextColumn(
+            "", disabled=True, width="small",
+            help="Stato del certificato medico, ricalcolato dopo il "
+                 "salvataggio."),
+        "Codice FIN": st.column_config.NumberColumn(
+            "Codice FIN", format="%d", min_value=1, step=1,
+            help="Deve essere libero: se e' gia' di un altro il salvataggio "
+                 "si ferma e lo dice."),
+        "Cognome": st.column_config.TextColumn(
+            "Cognome", max_chars=crud.MAX_NOME, required=True),
+        "Nome": st.column_config.TextColumn(
+            "Nome", max_chars=crud.MAX_NOME, required=True),
+        "Sesso": st.column_config.SelectboxColumn(
+            "Sesso", options=["M", "F"], required=True, width="small"),
+        "Data di nascita": st.column_config.DateColumn(
+            "Data di nascita", format="DD/MM/YYYY",
+            max_value=_dt.date.today()),
+        "E-Mail": st.column_config.TextColumn("E-Mail", max_chars=crud.MAX_NOME),
+        "Atleta": st.column_config.CheckboxColumn(
+            "Atleta", help="Compare nei selettori, nelle classifiche e nei "
+                           "conteggi."),
+        "Staff": st.column_config.CheckboxColumn(
+            "Staff", help="Allenatore: entra nell'app e vede Gestione. Chi e' "
+                          "solo staff deve avere l'e-mail."),
+        "Attivo": st.column_config.CheckboxColumn(
+            "Attivo", help="Togliendo la spunta l'atleta sparisce dagli "
+                           "elenchi correnti, ma gare e storico restano."),
         "Certificato": st.column_config.DateColumn(
             "Certificato", format="DD/MM/YYYY",
             help="Scadenza del certificato medico. Vuoto = non registrata."),
-        "Codice FIN": st.column_config.NumberColumn("Codice FIN", format="%d"),
-        "Gare": st.column_config.NumberColumn("Gare", help="Gare individuali a DB"),
+        "Gare": st.column_config.NumberColumn(
+            "Gare", disabled=True, help="Gare individuali a DB"),
     },
 )
+
+c_salva, c_conta = st.columns([2, 4], vertical_alignment="center")
+if c_salva.button("Salva le modifiche", type="primary",
+                  use_container_width=True, key="anag_salva_griglia"):
+    righe = []
+    for r in modificata.to_dict("records"):
+        righe.append({
+            "athlete_id": r.get("ID"),
+            "fin_code": r.get("Codice FIN"),
+            "first_name": r.get("Nome"),
+            "last_name": r.get("Cognome"),
+            "sex": str(r.get("Sesso") or "M").upper().startswith("M"),
+            "birth_date": r.get("Data di nascita"),
+            "email": r.get("E-Mail"),
+            "is_athlete": r.get("Atleta"),
+            "is_staff": r.get("Staff"),
+            "attivo": r.get("Attivo"),
+            "certificato": r.get("Certificato"),
+        })
+    quante, problemi = crud.salva_anagrafica(righe)
+    if problemi:
+        st.error("Non ho salvato niente: prima sistema questi punti.")
+        for p in problemi[:12]:
+            st.warning(p)
+        if len(problemi) > 12:
+            st.caption(f"…e altri {len(problemi) - 12} problemi.")
+    else:
+        st.session_state["anag_msg"] = (
+            "Nessuna modifica da salvare." if not quante else
+            f"Salvate le modifiche di {quante} "
+            f"atlet{'a' if quante == 1 else 'i'}.")
+        st.rerun()
 
 _n_rosse, _n_gialle = int(_rosse.sum()), int(_gialle.sum())
 if _n_rosse or _n_gialle:
     pezzi = []
     if _n_rosse:
-        pezzi.append(f"{_n_rosse} con il certificato scaduto")
+        pezzi.append(f"🔴 {_n_rosse} con il certificato scaduto")
     if _n_gialle:
-        pezzi.append(f"{_n_gialle} in scadenza entro {GIORNI_PREAVVISO} giorni")
-    st.caption("Righe colorate: " + " e ".join(pezzi) +
-               ". Il controllo vale per le categorie master, dai 20 anni in su.")
+        pezzi.append(f"🟡 {_n_gialle} in scadenza entro {GIORNI_PREAVVISO} giorni")
+    c_conta.caption(" · ".join(pezzi))
 
 # ── Azioni sulla riga ─────────────────────────────────────────────
 st.markdown('<div class="section-title">Azioni</div>', unsafe_allow_html=True)
@@ -375,6 +437,24 @@ else:
     if c_del.button("Elimina", use_container_width=True):
         st.session_state["anag_conferma"] = int(scelto)
         st.rerun()
+
+# Guardare l'app con i suoi occhi, senza toccargli la password: serve per
+# capire perche' uno "non vede" una gara o un'iscrizione. E' in sola
+# lettura, e la fascia in cima a ogni pagina ricorda da chi si sta
+# guardando e come tornare indietro.
+if st.button(f"👁  Vedi l'app come {str(riga['first_name']).title()}",
+             use_container_width=True, key="anag_emula",
+             help="Sola lettura: niente iscrizioni e niente modifiche. "
+                  "La sua password non viene toccata."):
+    fatto, messaggio = auth.emula(int(scelto))
+    if not fatto:
+        st.error(messaggio)
+    else:
+        # La scheda atleta aperta diventa la sua, se no si ritroverebbe
+        # davanti quella di prima.
+        st.session_state["athlete_id"] = int(scelto)
+        st.session_state["scheda_aperta"] = False
+        st.switch_page("views/agenda.py")
 
 # ══════════════════════════════════════════════════════════════════
 # Credenziali dell'atleta selezionato

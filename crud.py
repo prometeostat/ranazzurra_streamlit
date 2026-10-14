@@ -186,6 +186,106 @@ def imposta_stato_atleta(athlete_id: int, attivo: bool) -> int:
             else disattiva_atleta(int(athlete_id)))
 
 
+def salva_anagrafica(righe: list[dict]) -> tuple[int, list[str]]:
+    """
+    Scrive piu' atleti in un colpo, come li ha lasciati la griglia.
+
+    O passa tutto o non passa niente: prima si validano tutte le righe, e
+    solo se non c'e' un errore si comincia a scrivere. Con una griglia da
+    270 righe salvarne meta' e fermarsi su un errore lascerebbe
+    l'anagrafica in uno stato che nessuno sa piu' ricostruire.
+
+    Ogni voce ha athlete_id piu' i campi modificabili. Le righe che non
+    risultano cambiate rispetto a database non vengono nemmeno toccate, cosi'
+    un salvataggio a vuoto non riscrive 270 volte lo stesso dato.
+    Restituisce quante righe ha cambiato e gli errori trovati.
+    """
+    attuale = elenco_atleti()
+    if attuale.empty:
+        return 0, ["Anagrafica non disponibile."]
+    per_id = {int(r["athlete_id"]): r for r in attuale.to_dict("records")}
+
+    errori: list[str] = []
+    da_scrivere: list[tuple[int, dict, bool | None]] = []
+    fin_nel_lotto: dict[int, str] = {}
+
+    for r in righe:
+        aid = _intero(r.get("athlete_id"))
+        if aid is None or aid not in per_id:
+            continue                      # riga che non e' di questa anagrafica
+        prima = per_id[aid]
+        chi = (f"{_testo_o_vuoto(r.get('last_name'))} "
+               f"{_testo_o_vuoto(r.get('first_name'))}").strip() or f"id {aid}"
+
+        dati = {
+            "fin_code": _intero(r.get("fin_code")),
+            "first_name": _testo_o_vuoto(r.get("first_name")),
+            "last_name": _testo_o_vuoto(r.get("last_name")),
+            "sex": bool(r.get("sex")),
+            "birth_date": _data_pura(r.get("birth_date")),
+            "email": _testo_o_vuoto(r.get("email")),
+            "is_athlete": bool(r.get("is_athlete")),
+            "is_staff": bool(r.get("is_staff")),
+            "certificato": _data_pura(r.get("certificato")),
+        }
+
+        for e in valida(dati, aid):
+            errori.append(f"{chi}: {e}")
+
+        # Il codice FIN e' unico, ma valida() lo cerca a database e non vede
+        # le altre righe della griglia: due atleti a cui si da' lo stesso
+        # numero nello stesso salvataggio passerebbero il controllo.
+        fin = dati["fin_code"]
+        if fin is not None:
+            if fin in fin_nel_lotto:
+                errori.append(f"{chi}: il codice FIN {fin} e' stato dato anche "
+                              f"a {fin_nel_lotto[fin]} in questa tabella.")
+            fin_nel_lotto[fin] = chi
+
+        attivo = bool(r.get("attivo", True))
+        era_attivo = not bool(prima.get("is_deleted"))
+        cambia_stato = attivo if attivo != era_attivo else None
+
+        if _anagrafica_cambiata(prima, dati) or cambia_stato is not None:
+            da_scrivere.append((aid, dati, cambia_stato))
+
+    if errori:
+        return 0, errori
+
+    for aid, dati, cambia_stato in da_scrivere:
+        aggiorna_atleta(aid, dati)
+        if cambia_stato is not None:
+            imposta_stato_atleta(aid, cambia_stato)
+    return len(da_scrivere), []
+
+
+def _testo_o_vuoto(v) -> str:
+    """Stringa pulita, mai None: i campi di testo della griglia tornano
+    stringa vuota quando si svuota la cella, e pd.NA quando non si tocca."""
+    try:
+        if v is None or pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip()
+
+
+def _anagrafica_cambiata(prima: dict, dopo: dict) -> bool:
+    """Confronto campo per campo con quello che c'e' a database."""
+    confronti = (
+        (_intero(prima.get("fin_code")), dopo["fin_code"]),
+        (_testo_o_vuoto(prima.get("first_name")), dopo["first_name"]),
+        (_testo_o_vuoto(prima.get("last_name")), dopo["last_name"]),
+        (bool(prima.get("sex")), dopo["sex"]),
+        (_data_pura(prima.get("birth_date")), dopo["birth_date"]),
+        (_testo_o_vuoto(prima.get("email")), dopo["email"]),
+        (bool(prima.get("is_athlete")), dopo["is_athlete"]),
+        (bool(prima.get("is_staff")), dopo["is_staff"]),
+        (_data_pura(prima.get("certificato")), dopo["certificato"]),
+    )
+    return any(a != b for a, b in confronti)
+
+
 def disattiva_atleta(athlete_id: int) -> int:
     """Soft delete: nessun DELETE, solo is_deleted = TRUE."""
     n = execute(ATHLETE_DEACTIVATE_SQL, (_user_id(), int(athlete_id)))

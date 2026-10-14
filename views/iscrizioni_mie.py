@@ -107,7 +107,10 @@ st.dataframe(
     },
 )
 
-if bool(riga["aperta"]):
+if auth.sola_lettura():
+    st.caption("Stai guardando come un altro atleta: le iscrizioni si "
+               "leggono e basta.")
+elif bool(riga["aperta"]):
     if st.button("Modifica queste iscrizioni", type="primary",
                  use_container_width=True):
         st.session_state["isc_comp"] = int(comp_id)

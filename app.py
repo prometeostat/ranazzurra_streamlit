@@ -72,6 +72,7 @@ PAGINE = {
                               title="Lista iscrizioni",
                               url_path="lista-iscrizioni"),
     "profilo": st.Page("views/profilo.py", title="Profilo", url_path="profilo"),
+    "novita": st.Page("views/novita.py", title="Novità", url_path="novita"),
 }
 # Le iscrizioni ricevute le guardano anche gli allenatori, non solo
 # l'amministratore: la pagina si registra per tutti e due e dentro c'e' il
@@ -100,7 +101,7 @@ VOCI = [
     ("cerca", "🔍", "Cerca",
      {"cerca", "scheda", "classifiche", "risultati", "iscrizioni",
       "iscrizioni_nuove", "iscrizioni_mie"}),
-    ("profilo", "👤", "Profilo", {"profilo"}),
+    ("profilo", "👤", "Profilo", {"profilo", "novita"}),
 ]
 if auth.is_staff():
     VOCI.append(("gestione", "🛠️", "Gestione",
@@ -139,5 +140,36 @@ def barra_in_basso() -> None:
                     st.switch_page(PAGINE[chiave])
 
 
+def fascia_emulazione() -> None:
+    """
+    Avviso fisso quando l'amministratore sta guardando con gli occhi di un
+    altro: dice chi, ricorda che e' in sola lettura e offre il rientro.
+
+    Sta qui e non dentro page_header perche' deve comparire su ogni pagina,
+    e il bottone legge l'utente VERO: durante l'emulazione i permessi sono
+    quelli dell'atleta, quindi un controllo su is_admin() chiuderebbe la
+    porta da dentro.
+    """
+    if not auth.in_emulazione():
+        return
+    finto = auth.current_user() or {}
+    vero = auth.utente_vero() or {}
+    c_testo, c_btn = st.columns([4, 1.5], vertical_alignment="center")
+    c_testo.warning(
+        f"Stai guardando l'app come **{str(finto.get('full_name', '')).title()}**, "
+        "in sola lettura. Sei collegato come "
+        f"{str(vero.get('full_name', '')).title()}.", icon="👁")
+    if c_btn.button("Torna me stesso", type="primary",
+                    use_container_width=True, key="fine_emulazione"):
+        auth.smetti_emulazione()
+        st.session_state["athlete_id"] = vero.get("athlete_id")
+        # Un rerun e basta: si resta dov'eravamo, ma con i propri occhi e
+        # con le pagine riservate di nuovo in elenco. Uno switch_page qui
+        # non potrebbe puntare a una pagina admin, che in questo giro non e'
+        # nemmeno registrata.
+        st.rerun()
+
+
 barra_in_basso()
+fascia_emulazione()
 nav.run()

@@ -3,8 +3,9 @@ views/confronto.py — due atleti testa a testa.
 
 Niente grafici e niente riepiloghi: si guardano i tempi. Due atleti alla
 volta e solo le gare nuotate da tutti e due, se no non e' un confronto.
-Sotto a ogni tempo ci sono la data, il punteggio FIN di quella gara e il
-nome della manifestazione, che porta al PDF dei risultati.
+Sotto a ogni tempo ci sono la data, il punteggio di quella gara (FIN sulle
+federali, Acquasport sulle giornate di circuito) e il nome della
+manifestazione, che porta al PDF dei risultati.
 
 Il database contiene solo i nostri tesserati, quindi il confronto resta
 interno alla squadra.
@@ -20,8 +21,9 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_int, fmt_time, pool_label, section
-from views._common import (apply_pool, fin_filter, inline_filters,
-                           page_header, pool_filter, season_year)
+from views._common import (apply_pool, etichetta_punti, fin_filter,
+                           inline_filters, page_header, pool_filter,
+                           season_year)
 
 TUTTE = "Tutte le gare in comune"
 
@@ -103,10 +105,12 @@ def _distacco(gap: float) -> str:
 
 
 def _lato(r: dict, vince: bool, destra: bool = False) -> str:
-    """Tempo, data e punteggio FIN di quella gara, manifestazione col link."""
+    """Tempo, data e punteggio di quella gara, manifestazione col link."""
     classi = " ".join(filter(None, ["vs-side", "vs-dx" if destra else "",
                                     "vincente" if vince else ""]))
-    punti = (f' · {fmt_int(r.get("fin_score"))} FIN'
+    # FIN o Acquasport: due grandezze nello stesso campo, l'etichetta lo dice
+    punti = (f' · {fmt_int(r.get("fin_score"))} '
+             f'{etichetta_punti(r.get("is_fin"))}'
              if pd.notna(r.get("fin_score")) else "")
     quando = pd.to_datetime(r.get("comp_date"))
     data_txt = "—" if pd.isna(quando) else quando.strftime("%d/%m/%Y")

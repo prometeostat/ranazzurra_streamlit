@@ -3,7 +3,9 @@ views/risultati.py — risultati di una manifestazione, gara per gara.
 
 Si sceglie il periodo, poi la manifestazione, poi si clicca Visualizza: sotto
 esce l'elenco delle gare e, dentro ogni gara, gli iscritti con tempo e
-punteggio FIN.
+punteggio. Il punteggio e' quello FIN sulle gare del calendario federale e
+quello del regolamento Acquasport sulle giornate di circuito: l'etichetta lo
+dice, perche' sono due grandezze diverse nello stesso campo.
 
 Il bottone non e' un vezzo: l'elenco va letto dal database e con "tutte le
 stagioni" nel menu ci sono centinaia di manifestazioni. Cosi' si scorre il
@@ -21,8 +23,8 @@ import crud
 import data
 import season as season_mod
 from theme import fmt_time, pool_label
-from views._common import (apply_fin, blocchi_programma, inline_filters,
-                           page_header, season_year)
+from views._common import (apply_fin, blocchi_programma, etichetta_punti,
+                           inline_filters, page_header, season_year)
 
 # Quanto avanti si guarda, come in Agenda: le manifestazioni piu' in la'
 # esistono a calendario ma non hanno ancora niente da mostrare qui, e
@@ -96,6 +98,13 @@ scelta = st.selectbox("Manifestazione", opzioni, key="mf_scelta",
                       format_func=_etichetta_manif, on_change=_scorda,
                       help="Ci sono le manifestazioni del periodo in cui "
                            "abbiamo gareggiato, dalla piu' recente.")
+# Quante ne contiene il menu: chiuso mostra solo la prima, e senza questa
+# riga sembra che il periodo ne abbia una sola.
+_quante = len(opzioni)
+st.caption(
+    f"{_quante} manifestazion{'e' if _quante == 1 else 'i'} nel periodo "
+    f"{season_mod.label(season_year()).lower()}, dalla più recente."
+    if _quante else "Nessuna manifestazione nel periodo.")
 
 if st.button("Visualizza", type="primary", use_container_width=True):
     st.session_state["mf_vista"] = int(scelta)
@@ -182,8 +191,11 @@ def _blocco(relay: bool, stroke: str, dist: str, pool, g: pd.DataFrame) -> str:
         # frazionista: numerare i frazionisti darebbe una classifica finta.
         pos = "" if relay or pd.isna(r["time_sec"]) else f"{i}"
         tempo = fmt_time(r["time_sec"]) if pd.notna(r["time_sec"]) else "—"
+        # i punti si chiamano col nome giusto: FIN sulle gare federali,
+        # Acquasport sulle giornate di circuito
         punti = ("" if pd.isna(r.get("fin_score"))
-                 else f'{int(r["fin_score"])} punti FIN')
+                 else f'{int(r["fin_score"])} '
+                      f'{etichetta_punti(r.get("is_fin"))}')
         righe += (
             f'<div class="mf-row{" mf-mio" if mio else ""}">'
             f'<div class="mf-pos">{pos}</div>'
@@ -234,6 +246,8 @@ else:
         "L'ordine dentro ogni gara e' quello del tempo; gli iscritti senza "
         "tempo (non partiti, ritirati o squalificati) restano in elenco senza "
         "posizione. Nelle staffette il tempo e' quello della squadra, uguale "
-        "per tutti i frazionisti, e il punteggio FIN non viene assegnato. La "
-        f"categoria e' quella della stagione {season_mod.label(stagione)}."
+        "per tutti i frazionisti, e il punteggio non viene assegnato. I punti "
+        + ("sono il punteggio FIN." if ufficiale else
+           "sono quelli del regolamento Acquasport, non il punteggio FIN.")
+        + f" La categoria e' quella della stagione {season_mod.label(stagione)}."
     )

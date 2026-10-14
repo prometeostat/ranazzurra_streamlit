@@ -45,6 +45,9 @@ from queries import (ACCESS_LOG_INSERT_SQL, ATHLETE_BY_EMAIL_BIRTH_SQL,
                      LOGIN_BY_EMAIL_SQL)
 
 SESSION_KEY = "auth_user"
+# Identita' emulata dall'amministratore: vive solo in sessione, non tocca il
+# token "ricordami" e sparisce ricaricando la pagina.
+SESSION_AS = "auth_come"
 TOKEN_PARAM = "t"
 TOKEN_TTL_DAYS = 30
 
@@ -433,10 +436,7 @@ def _login_user(rec: dict, email: str | None = None, remember: bool = False,
 # API pubblica
 # ══════════════════════════════════════════════════════════════════
 
-def current_user() -> dict | None:
-    u = st.session_state.get(SESSION_KEY)
-    if not u:
-        return None
+def _con_ruolo(u: dict) -> dict:
     # Il ruolo si rilegge dai secrets a ogni giro invece di restare congelato
     # al momento del login: se cambia la lista degli amministratori la nuova
     # regola vale subito, senza dover uscire e rientrare. In modalita' "open"
@@ -445,6 +445,90 @@ def current_user() -> dict | None:
         u["role"] = _role_for(u.get("athlete_id"), u.get("fin_code"),
                               u.get("email"), u.get("is_staff", False))
     return u
+
+
+def utente_vero() -> dict | None:
+    """
+    Chi e' collegato davvero, anche mentre sta guardando con gli occhi di un
+    altro. Serve ai due posti che devono ignorare l'emulazione: la fascia
+    che offre il rientro e il controllo dei permessi per avviarla.
+    """
+    u = st.session_state.get(SESSION_KEY)
+    return None if not u else _con_ruolo(u)
+
+
+def current_user() -> dict | None:
+    """
+    L'identita' con cui l'app lavora adesso. Durante un'emulazione e'
+    l'atleta emulato, cosi' pagine, menu e query vedono esattamente quello
+    che vedrebbe lui, compresa la perdita delle sezioni riservate.
+    """
+    finto = st.session_state.get(SESSION_AS)
+    if finto:
+        return _con_ruolo(dict(finto))
+    return utente_vero()
+
+
+# ══════════════════════════════════════════════════════════════════
+# Emulazione: guardare l'app con gli occhi di un atleta
+# ══════════════════════════════════════════════════════════════════
+# Serve all'amministratore per capire cosa vede davvero un tesserato senza
+# toccargli la password. E' in sola lettura: durante l'emulazione le pagine
+# spengono tutto quello che scrive, perche' una riga scritta cosi' sarebbe
+# indistinguibile da una scritta dall'atleta (creation_user_id e' l'utente
+# tecnico, non chi sta usando l'app).
+
+def in_emulazione() -> bool:
+    return bool(st.session_state.get(SESSION_AS))
+
+
+def sola_lettura() -> bool:
+    """Le pagine chiedono questo prima di disegnare un bottone che scrive."""
+    return in_emulazione()
+
+
+def emula(athlete_id: int) -> tuple[bool, str]:
+    """
+    Comincia a guardare l'app come quell'atleta. Solo l'amministratore, e il
+    permesso si controlla sull'utente VERO: durante un'emulazione is_admin()
+    risponde per l'emulato, quindi usarlo qui vorrebbe dire non poterne piu'
+    uscire per cambiare atleta.
+    """
+    vero = utente_vero()
+    if not vero or vero.get("role") != "admin":
+        return False, "L'emulazione e' riservata all'amministratore."
+    if int(athlete_id) == int(vero.get("athlete_id") or -1):
+        return False, "Sei gia' tu."
+
+    rec = _athlete_by_id(int(athlete_id))
+    if not rec:
+        return False, "Atleta non trovato o non piu' attivo."
+
+    st.session_state[SESSION_AS] = {
+        "athlete_id": int(rec["athlete_id"]),
+        "full_name": rec["full_name"],
+        "fin_code": rec.get("fin_code"),
+        # Niente e-mail: l'emulato non deve poter toccare le credenziali, e
+        # senza e-mail il riquadro della password resta chiuso da solo.
+        "email": None,
+        "is_staff": bool(rec.get("is_staff") or False),
+        "role": "atleta",
+    }
+    registra_accesso("EMULAZIONE", id=int(rec["athlete_id"]),
+                     nome=rec["full_name"], fin=rec.get("fin_code"),
+                     via="admin",
+                     nota=f"guardato da {vero.get('full_name')} "
+                          f"(id {vero.get('athlete_id')})")
+    return True, f"Stai guardando l'app come {str(rec['full_name']).title()}."
+
+
+def smetti_emulazione() -> None:
+    finto = st.session_state.pop(SESSION_AS, None)
+    vero = utente_vero() or {}
+    if finto:
+        registra_accesso("FINE EMULAZIONE", id=finto.get("athlete_id"),
+                         nome=finto.get("full_name"), via="admin",
+                         nota=f"tornato {vero.get('full_name')}")
 
 
 def diagnostica() -> dict:
@@ -489,6 +573,10 @@ def is_admin() -> bool:
 
 
 def logout() -> None:
+    # Se si stava emulando qualcuno, l'emulazione finisce qui: la sessione
+    # che se ne va e' quella vera, e lasciarsi dietro l'identita' finta
+    # vorrebbe dire ritrovarsela addosso al prossimo accesso.
+    smetti_emulazione()
     u = st.session_state.get(SESSION_KEY) or {}
     registra_accesso("USCITA", id=u.get("athlete_id"), nome=u.get("full_name"))
     st.session_state.pop(SESSION_KEY, None)

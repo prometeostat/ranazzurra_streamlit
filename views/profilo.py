@@ -15,6 +15,7 @@ import auth
 import data
 import season as season_mod
 import theme
+import version
 from views._common import (anagrafica, apri_atleta, page_header, preferiti,
                            season_year, toggle_preferito)
 
@@ -128,7 +129,7 @@ st.radio("Tema", options=["dark", "light"],
          format_func=lambda m: "Scuro" if m == "dark" else "Chiaro",
          horizontal=True, key="profilo_tema", on_change=_salva_tema)
 
-if auth.modalita() == "password" and mio is not None:
+if auth.modalita() == "password" and mio is not None and not auth.sola_lettura():
     with st.expander("Cambia password"):
         with st.form("cambio_password"):
             vecchia = st.text_input("Password attuale", type="password")
@@ -160,5 +161,16 @@ with st.expander("Installa l'app sul telefono"):
         "arrivano dal database in tempo reale.")
 
 st.markdown("---")
-if st.button("Esci", use_container_width=True):
+# Versione in chiaro e collegamento alle novita': niente avvisi a comparsa,
+# chi vuole sapere cosa e' cambiato sa dove guardare. Il numero serve anche
+# a noi: quando un atleta segnala un problema, dice che versione sta usando.
+st.page_link("views/novita.py", label="Novità dell'app", icon="✨")
+st.caption(f"Master Conegliano · {version.etichetta()}")
+
+if auth.sola_lettura():
+    # L'uscita e' della sessione vera: da dentro un'emulazione farebbe
+    # scollegare l'amministratore, che non e' quello che si vuole quando si
+    # sta solo dando un'occhiata.
+    st.caption("Per uscire torna prima te stesso, dalla fascia in alto.")
+elif st.button("Esci", use_container_width=True):
     auth.logout()

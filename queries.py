@@ -320,6 +320,7 @@ SELECT
     co.type                                  AS comp_type,
     co.website_link,
     co.timing,
+    co.is_fin,
     s.name                                   AS stroke,
     d.type                                   AS distance,
     r.pool_length,
@@ -424,6 +425,7 @@ SELECT * FROM (
         ar.fin_score                                  AS fin_score,
         co.start_date                                 AS comp_date,
         co."type"                                     AS comp_name,
+        co.is_fin,
         co.pdf_link,
         co.website_link
     FROM athletes a
@@ -1446,7 +1448,8 @@ SELECT
     EXTRACT(YEAR FROM a.birth_date)::int             AS birth_year,
     EXTRACT(EPOCH FROM ar.final_time)::float         AS time_sec,
     ar.fin_score,
-    co.start_date                                    AS comp_date
+    co.start_date                                    AS comp_date,
+    co.is_fin
 FROM athlete_races ar
 JOIN races        r  ON r.id  = ar.race_id        AND r.is_deleted = FALSE
 JOIN competitions co ON co.id = r.competition_id  AND co.is_deleted = FALSE

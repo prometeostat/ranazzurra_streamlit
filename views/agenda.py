@@ -119,6 +119,8 @@ def _stato_iscrizioni(r: dict) -> tuple[bool, str]:
     La verifica vera la rifa' comunque crud prima di scrivere: qui si decide
     solo come disegnare il bottone.
     """
+    if auth.sola_lettura():
+        return False, "Stai guardando come un altro atleta: sola lettura"
     apertura = pd.to_datetime(r.get("open_registration_date"), errors="coerce")
     chiusura = pd.to_datetime(r.get("close_registration_date"), errors="coerce")
     if pd.isna(apertura) or pd.isna(chiusura):
@@ -173,7 +175,11 @@ else:
         if not _sono_atleta:
             st.markdown(_scheda(r, True), unsafe_allow_html=True)
             continue
-        c_card, c_btn = st.columns([5, 2], vertical_alignment="center")
+        # Le due colonne stanno dentro un contenitore con chiave perche' il
+        # CSS possa tenerle affiancate anche sul telefono: sotto i 640px
+        # Streamlit impila le colonne, e il bottone finiva sotto la scheda.
+        with st.container(key=f"riga_{int(r['comp_id'])}"):
+            c_card, c_btn = st.columns([5, 2], vertical_alignment="center")
         c_card.markdown(_scheda(r, True), unsafe_allow_html=True)
         si_puo, perche = _stato_iscrizioni(r)
         # Il bottone c'e' sempre, anche spento: dice che quella gara una

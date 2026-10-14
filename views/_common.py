@@ -122,6 +122,21 @@ def fin_filter() -> bool | None:
     return FIN_UI.get(st.session_state.get("fin_filter", TUTTE_LE_MANIF))
 
 
+def etichetta_punti(is_fin, lunga: bool = False) -> str:
+    """Come si chiamano i punti di quella manifestazione.
+
+    `athlete_races.fin_score` porta due grandezze diverse: sulle gare del
+    calendario federale e' il punteggio FIN, sulle giornate di circuito e' il
+    punteggio del regolamento Acquasport (10-8-7-6-5-4-3-2-1 ai primi nove).
+    Chiamarli tutti "punti FIN" e' sbagliato, e fa sembrare un errore un 10
+    accanto a un tempo.
+
+    `lunga` da' la forma "punteggio ...", per le etichette dei riquadri.
+    """
+    nome = "FIN" if bool(is_fin) else "Acquasport"
+    return f"punteggio {nome}" if lunga else f"punti {nome}"
+
+
 def apply_fin(df: pd.DataFrame, col: str = "is_fin") -> pd.DataFrame:
     """Stesso filtro, ma su un DataFrame gia' caricato.
 

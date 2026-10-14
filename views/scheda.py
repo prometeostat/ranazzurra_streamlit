@@ -19,8 +19,8 @@ import data
 import season as season_mod
 from theme import fmt_int, fmt_time, kpi, pool_label
 from views._common import (anagrafica, apply_pool, apply_stroke, apri_atleta,
-                           e_preferito, fin_filter, hero, inline_filters,
-                           page_header,
+                           e_preferito, etichetta_punti, fin_filter, hero,
+                           inline_filters, page_header,
                            preferiti, season_year, selected_athlete,
                            toggle_preferito)
 
@@ -193,18 +193,29 @@ gare["luogo"] = gare["comp_type"].fillna("Manifestazione").astype(str)
 # ══════════════════════════════════════════════════════════════════
 # Contano la stagione scelta, non il filtro vasca: quello vale per l'elenco.
 def _kpi_fin() -> str:
-    """Miglior punteggio FIN del periodo, con la gara che l'ha prodotto."""
-    punteggi = gare["fin_score"].dropna()
-    if punteggi.empty:
-        return kpi("—", "Miglior punteggio FIN", "green")
+    """Miglior punteggio del periodo, con la gara che l'ha prodotto.
 
-    r = gare.loc[punteggi.idxmax()]
+    Il massimo non si prende mescolando: `fin_score` porta il punteggio FIN
+    sulle gare federali e quello del regolamento Acquasport sulle giornate di
+    circuito, due scale diverse (centinaia contro 1-10). Si guardano prima le
+    federali, e solo se non ce ne sono si ripiega sul circuito, dicendolo.
+    """
+    con_punti = gare[gare["fin_score"].notna()]
+    if con_punti.empty:
+        return kpi("—", "Miglior punteggio", "green")
+    if "is_fin" in con_punti.columns:
+        federali = con_punti[con_punti["is_fin"].astype(bool)]
+        if not federali.empty:
+            con_punti = federali
+
+    r = con_punti.loc[con_punti["fin_score"].idxmax()]
     quando = pd.to_datetime(r["comp_date"])
     sotto = (f'{html.escape(str(r["event_label"]))} · '
              f'{"" if pd.isna(quando) else quando.strftime("%d/%m/%Y")}')
     blocco = (f'<div class="kpi-wrap">'
               f'<div class="kpi-val green">{fmt_int(r["fin_score"])}</div>'
-              f'<div class="kpi-lbl">Miglior punteggio FIN</div>'
+              f'<div class="kpi-lbl">Miglior '
+              f'{etichetta_punti(r.get("is_fin"), lunga=True)}</div>'
               f'<div class="kpi-sub">{sotto}</div>'
               f'<div class="kpi-sub">'
               f'{html.escape(str(r.get("comp_type") or "Manifestazione"))}</div>'
@@ -359,7 +370,8 @@ for stile in righe["stroke"].unique():
             badge = '<span class="pb-badge">PB</span>' if pb else ""
             gap = (f'<span class="evt-gap">+{r["gap"]:.2f}</span>'
                    if not pb and pd.notna(r["gap"]) and r["gap"] > 0 else "")
-            punti = (f' · {fmt_int(r["fin_score"])} punti FIN'
+            punti = (f' · {fmt_int(r["fin_score"])} '
+                     f'{etichetta_punti(r.get("is_fin"))}'
                      if pd.notna(r.get("fin_score")) else "")
             blocco += (
                 f'<div class="evt-row">'

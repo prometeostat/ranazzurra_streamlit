@@ -545,6 +545,21 @@ div[class*="st-key-isc_"] .stButton button:disabled {
     opacity: 0.45; border-style: dashed;
 }
 
+/* Scheda e bottone restano affiancati anche sul telefono. Sotto i 640px
+   Streamlit manda le colonne a capo una sotto l'altra: qui si toglie
+   l'andata a capo e si lascia alla scheda tutto lo spazio che avanza,
+   mentre il bottone tiene i suoi 92px piu' il margine. */
+div[class*="st-key-riga_"] div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important; gap: 8px;
+}
+div[class*="st-key-riga_"] div[data-testid="stColumn"]:first-child {
+    flex: 1 1 auto !important; min-width: 0 !important;
+}
+div[class*="st-key-riga_"] div[data-testid="stColumn"]:last-child {
+    flex: 0 0 104px !important; min-width: 104px !important;
+    width: 104px !important;
+}
+
 /* ── Iscrizioni ──
    La scadenza e' l'unica data che fa perdere la gara: pastiglia accesa,
    gialla su scuro e arancio su chiaro, impossibile non vederla. */

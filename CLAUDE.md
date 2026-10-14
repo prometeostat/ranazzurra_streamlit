@@ -86,6 +86,17 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - Valori da `st.data_editor` con colonne `Int64` arrivano come `pd.NA`:
   controllare con `pd.isna()` prima di `or` / `in`. Ci sono gia' gli helper
   `crud._intero`, `crud._testo` e quelli in `views/manifestazioni.py`.
+- `st.data_editor` **non accetta uno Styler**: una tabella o si colora o si
+  edita. Dove servono tutti e due, il colore diventa una colonna (il pallino
+  del certificato in `views/anagrafica.py`).
+- `st.data_editor` tiene le celle toccate **per posizione di riga**: se le
+  righe cambiano (filtro, ordinamento, ricerca) le modifiche in sospeso
+  finiscono su altri. La chiave del widget deve portare dentro un'impronta
+  delle righe mostrate, cosi' cambia con loro.
+- I salvataggi in blocco validano tutto il lotto e poi scrivono, mai riga
+  per riga: `crud.salva_anagrafica` e `crud.salva_programma`. Un controllo
+  che la validazione della singola riga non puo' fare e' il duplicato dentro
+  il lotto stesso (codice FIN).
 - `crud._pulisci_manifestazione()` restituisce 11 valori (gli ultimi due sono
   `is_fin` e `organizer_company_id`); insert usa 12 placeholder e update 13.
   Toccando la tupla vanno ricontati tutti e tre.
@@ -103,6 +114,11 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - Le regole delle iscrizioni (finestra aperta, limite individuali,
   proprieta' della riga) stanno in `crud.salva_iscrizioni` e rileggono il
   database: l'interfaccia disabilita i bottoni, non autorizza.
+- **Emulazione**: `auth.current_user()` puo' restituire un atleta emulato
+  dall'amministratore, `auth.utente_vero()` restituisce sempre chi e'
+  collegato davvero. I permessi per avviare o chiudere un'emulazione si
+  controllano sul secondo (dentro l'emulazione `is_admin()` risponde per
+  l'emulato). Ogni pagina che scrive chiede prima `auth.sola_lettura()`.
 - **Una lettura cachata non e' una rilettura.** Prima di scrivere, lo stato
   va preso da una query senza cache: `crud._stato_a_database` per le
   iscrizioni. Decidere insert/update sull'`entry_id` che arriva dalla pagina
@@ -189,6 +205,10 @@ locale. Offline e push non sono ottenibili con Streamlit.
 - Stile visivo: glassmorphism, palette blu/aqua/teal, Bebas Neue e Barlow
   Condensed.
 - Quando una funzionalita' cambia, aggiornare la sezione del `README.md`.
+- **A ogni rilascio**: alzare `VERSIONE` e `DATA_RILASCIO` in `version.py` e
+  aggiungere il blocco in `CHANGELOG.md`. Quello e' il file che leggono gli
+  atleti dalla pagina Novita', quindi si scrive in italiano corrente e per
+  funzione, non per commit: niente nomi di file, di colonne o di query.
 
 ## Verifica prima di consegnare
 

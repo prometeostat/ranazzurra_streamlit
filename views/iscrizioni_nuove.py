@@ -117,6 +117,14 @@ if not finestra.get("aperta"):
     st.warning(crud.motivo_chiusura(finestra))
     st.stop()
 
+# Emulazione: si guarda e basta. Una riga scritta da qui sarebbe
+# indistinguibile da una scritta dall'atleta, quindi l'elenco delle gare si
+# ferma prima delle caselle.
+if auth.sola_lettura():
+    st.info("Stai guardando come un altro atleta: da qui non si scrive. "
+            "Per vedere le sue gare e i suoi tempi usa Lista iscrizioni.")
+    st.stop()
+
 gare = crud.gare_iscrizione(int(comp_id), mio_id)
 if gare.empty:
     st.info("Il programma gare non e' ancora stato caricato per questa "
