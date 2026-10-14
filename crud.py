@@ -305,6 +305,21 @@ def riattiva_atleta(athlete_id: int) -> int:
 MAX_NOME_GARA = 100      # competitions.type e' varchar(100)
 MAX_LINK = 500           # website_link e pdf_link sono varchar(500)
 
+# Fin dove si puo' datare una manifestazione. Non e' un vincolo del database,
+# che sulle `date` accetta molto di piu': e' il calendario sensato per questa
+# squadra, lo storico piu' vecchio a database e' del 2003.
+#
+# Serve soprattutto ai campi data dell'anagrafica: **st.date_input senza
+# min_value e max_value ammette solo dieci anni intorno al valore che ha in
+# mano**, e il calendario rifiutava una gara del 2003 con un "Date set outside
+# allowed range" che non spiegava niente. I limiti vanno quindi messi a mano
+# su ogni campo data, e qui ci sono una volta sola perche' il form di
+# inserimento, quello di modifica e quello di clonazione dicano la stessa
+# cosa. Li ricontrolla anche `valida_manifestazione`: l'interfaccia restringe
+# quello che si puo' scegliere, non autorizza quello che si scrive.
+PRIMA_DATA_GARA = _dt.date(1990, 1, 1)
+ULTIMA_DATA_GARA = _dt.date(2999, 12, 31)
+
 
 @st.cache_data(ttl=60, show_spinner=False)
 def elenco_manifestazioni() -> pd.DataFrame:
@@ -340,6 +355,22 @@ def valida_manifestazione(dati: dict) -> list[str]:
         errori.append("La data di inizio e' obbligatoria.")
     if inizio and fine and fine < inizio:
         errori.append("La data di fine viene prima di quella di inizio.")
+
+    # Il calendario del campo data gia' non lascia scegliere fuori intervallo,
+    # ma una data puo' arrivare anche da una griglia o da un clone: si
+    # ricontrolla qui, dove la regola vale per tutti.
+    for campo, etichetta in (("start_date", "data di inizio"),
+                             ("end_date", "data di fine"),
+                             ("open_reg", "apertura iscrizioni"),
+                             ("close_reg", "chiusura iscrizioni")):
+        quando = _data_pura(dati.get(campo))
+        if quando is None:
+            continue
+        if not (PRIMA_DATA_GARA <= quando <= ULTIMA_DATA_GARA):
+            errori.append(
+                f"La {etichetta} deve stare fra il "
+                f"{PRIMA_DATA_GARA.strftime('%d/%m/%Y')} e il "
+                f"{ULTIMA_DATA_GARA.strftime('%d/%m/%Y')}.")
 
     apertura, chiusura = dati.get("open_reg"), dati.get("close_reg")
     if apertura and chiusura and chiusura < apertura:
@@ -840,8 +871,53 @@ def salva_tempi(race_id: int, righe: list[dict],
 
 # Quanti giorni prima dell'apertura ufficiale la squadra raccoglie le
 # adesioni. Vale sia per il bottone in Agenda sia per la scrittura: la
-# regola e' una sola, e sta anche nelle query (vedi SIGNUP_MEETS_SQL).
+# regola e' una sola, e sta anche nelle query (vedi queries.FINESTRA_APERTA).
 GIORNI_ANTICIPO = 30
+
+# Quanti giorni prima della chiusura ufficiale l'atleta smette di poter
+# scrivere. L'ultimo giorno resta alla squadra per portare le adesioni sul
+# portale federale: dal giorno di close_registration_date in poi non si
+# iscrive e non si modifica piu' niente, si guarda. Vale per Iscriviti, per
+# Modifica e per il bottone in Agenda, e la stessa condizione sta in SQL.
+GIORNI_CODA = 1
+
+
+def ultimo_giorno_utile(chiusura) -> _dt.date | None:
+    """L'ultimo giorno in cui l'atleta puo' ancora scrivere."""
+    quando = _data_pura(chiusura)
+    return None if quando is None else quando - _dt.timedelta(days=GIORNI_CODA)
+
+
+def primo_giorno_utile(apertura) -> _dt.date | None:
+    """Il primo giorno in cui si raccolgono le adesioni."""
+    quando = _data_pura(apertura)
+    return None if quando is None else quando - _dt.timedelta(days=GIORNI_ANTICIPO)
+
+
+def stato_finestra(apertura, chiusura,
+                   oggi: _dt.date | None = None) -> tuple[bool, str]:
+    """
+    (si puo' scrivere, perche' no), decisa sulle due date della
+    manifestazione.
+
+    La usa l'interfaccia per disegnare bottoni e messaggi: Agenda, le due
+    pagine di iscrizione e la lista. Il controllo vero lo rifa' comunque
+    `salva_iscrizioni`, che rilegge la finestra a database prima di scrivere.
+    Sta qui una volta sola perche' prima ogni pagina se la riscriveva, e una
+    riscrittura che resta indietro e' un bottone che promette quello che poi
+    il server rifiuta.
+    """
+    oggi = oggi or _dt.date.today()
+    da, a = primo_giorno_utile(apertura), ultimo_giorno_utile(chiusura)
+    if da is None or a is None:
+        return False, "Date di iscrizione non ancora registrate"
+    if a < da:
+        return False, "Le date di iscrizione non sono coerenti"
+    if oggi < da:
+        return False, f"Si parte il {da.strftime('%d/%m/%Y')}"
+    if oggi > a:
+        return False, f"Chiuse il {a.strftime('%d/%m/%Y')}"
+    return True, ""
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -892,13 +968,20 @@ def motivo_chiusura(finestra: dict) -> str:
         return ("Per questa manifestazione non sono state registrate le date "
                 "di apertura e chiusura iscrizioni: chiedi all'amministratore.")
     oggi = _dt.date.today()
-    anticipo = finestra.get("anticipo") or (apertura - _dt.timedelta(days=GIORNI_ANTICIPO))
-    if oggi < anticipo:
+    anticipo = (_data_pura(finestra.get("anticipo"))
+                or primo_giorno_utile(apertura))
+    ultimo = (_data_pura(finestra.get("ultimo_giorno"))
+              or ultimo_giorno_utile(chiusura))
+    if anticipo is not None and oggi < anticipo:
         return (f"Si raccolgono le iscrizioni dal {anticipo.strftime('%d/%m/%Y')}, "
                 f"{GIORNI_ANTICIPO} giorni prima dell'apertura ufficiale del "
                 f"{apertura.strftime('%d/%m/%Y')}.")
-    if oggi > chiusura:
-        return f"Le iscrizioni si sono chiuse il {chiusura.strftime('%d/%m/%Y')}."
+    if ultimo is not None and oggi > ultimo:
+        return (f"Il termine era il {ultimo.strftime('%d/%m/%Y')}, il giorno "
+                f"prima della chiusura ufficiale del "
+                f"{chiusura.strftime('%d/%m/%Y')}: l'ultimo giorno serve alla "
+                "squadra per portare le adesioni sul portale federale. Per "
+                "una correzione adesso serve l'amministratore.")
     return "Iscrizioni non disponibili."
 
 
@@ -945,6 +1028,30 @@ def mie_iscrizioni(athlete_id: int) -> pd.DataFrame:
     if "race_date" in df.columns:
         df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
     return df
+
+
+def mie_manifestazioni(athlete_id: int) -> pd.DataFrame:
+    """
+    Una riga per manifestazione in cui l'atleta ha almeno un'iscrizione.
+
+    L'ordine arriva dalla query: prima quelle da nuotare, dalla piu' vicina,
+    poi lo storico dalla piu' recente. Serve a tre posti (l'indice delle
+    iscrizioni, la pagina Modifica e la lista), quindi sta qui e non in
+    pagina: contate in tre modi diversi, i numeri non tornavano.
+    """
+    mie = mie_iscrizioni(int(athlete_id))
+    if mie.empty:
+        return mie
+    mie = mie.copy()
+    mie["start_date"] = pd.to_datetime(mie["start_date"], errors="coerce")
+    quante = mie.groupby("comp_id", sort=False).size()
+    teste = mie.drop_duplicates(subset="comp_id").copy()
+    colonne = [c for c in ("comp_id", "manifestazione", "start_date",
+                           "chiusura", "ultimo_giorno", "aperta", "futura")
+               if c in teste.columns]
+    teste = teste[colonne]
+    teste["gare"] = teste["comp_id"].map(quante).astype(int)
+    return teste
 
 
 def conta_individuali(athlete_id: int, comp_id: int) -> int:

@@ -164,6 +164,78 @@ def apply_pool(df: pd.DataFrame, col: str = "pool_length") -> pd.DataFrame:
     return df[df[col] == int(pf.replace("m", ""))].copy()
 
 
+# ══════════════════════════════════════════════════════════════════
+# Classifiche: il parimerito
+# ══════════════════════════════════════════════════════════════════
+# Nel nuoto il cronometro si ferma al centesimo: due atleti con lo stesso
+# tempo al centesimo hanno fatto lo stesso risultato e stanno nella stessa
+# posizione, punto. Il confronto si fa quindi sui centesimi interi e non sui
+# secondi in virgola mobile, che per la stessa prestazione possono uscire
+# 28.9 da una parte e 28.900000000000002 dall'altra e romperebbero il
+# parimerito senza che si veda a video.
+
+
+def centesimi(tempi: pd.Series) -> pd.Series:
+    """Il tempo in centesimi interi, che e' la precisione della disciplina."""
+    return (pd.to_numeric(tempi, errors="coerce") * 100).round().astype("Int64")
+
+
+def classifica(df: pd.DataFrame, colonna: str = "pb_sec",
+               quanti: int | None = None,
+               a_parita: tuple[str, ...] = (),
+               uno_per: str | None = None) -> pd.DataFrame:
+    """
+    Ordina una classifica e assegna le posizioni, parimerito compresi.
+
+    Restituisce una copia con due colonne in piu': `posizione` (1, 1, 2, 2,
+    3: chi ha lo stesso tempo ha lo stesso numero e la numerazione non salta)
+    e `tempo_cent`, il tempo in centesimi su cui la posizione e' stata decisa.
+    La riga resta quella di partenza, intera: data, manifestazione e link
+    sono quelli della gara in cui quel tempo e' stato nuotato davvero, anche
+    quando due atleti a pari merito arrivano da due manifestazioni diverse.
+
+    `a_parita` sono le colonne che mettono in fila chi ha lo stesso tempo, per
+    non lasciare l'ordine al caso: servono solo a video e non toccano la
+    posizione, che dipende dal solo tempo.
+
+    `uno_per` tiene una riga sola per soggetto (`athlete_id` nelle classifiche
+    di squadra): fra le sue sopravvive la prima secondo l'ordine qui sopra,
+    cioe' il tempo migliore e, a parita' di tempo, quello che decide
+    `a_parita`. Le posizioni si calcolano dopo, se no un secondo tempo dello
+    stesso atleta si porterebbe via un gradino e la numerazione salterebbe.
+
+    `quanti` taglia la classifica alle prime N righe, ma **estesa a tutto il
+    parimerito**: se la N-esima e la N+1-esima hanno lo stesso tempo escono
+    tutte e due. Tagliare a N righe secche faceva sparire dalla classifica un
+    atleta che in quella posizione ci stava a pieno titolo.
+    """
+    if df.empty or colonna not in df.columns:
+        return df.copy()
+
+    fuori = df.copy()
+    fuori["tempo_cent"] = centesimi(fuori[colonna])
+    fuori = fuori[fuori["tempo_cent"].notna()]
+    if fuori.empty:
+        fuori["posizione"] = pd.Series(dtype="int64")
+        return fuori
+
+    # mergesort perche' e' stabile: a parita' di chiave l'ordine di partenza
+    # resta quello, e due letture della stessa pagina danno la stessa fila.
+    chiavi = ["tempo_cent"] + [c for c in a_parita if c in fuori.columns]
+    fuori = fuori.sort_values(chiavi, kind="mergesort").reset_index(drop=True)
+
+    if uno_per and uno_per in fuori.columns:
+        fuori = fuori.drop_duplicates(subset=uno_per, keep="first")
+
+    fuori["posizione"] = (fuori["tempo_cent"].rank(method="dense")
+                          .astype(int))
+
+    if quanti is not None and len(fuori) > quanti:
+        limite = int(fuori["tempo_cent"].iloc[quanti - 1])
+        fuori = fuori[fuori["tempo_cent"] <= limite]
+    return fuori.reset_index(drop=True)
+
+
 def anagrafica(sy: int | None = None) -> pd.DataFrame:
     """
     Anagrafica completa per la stagione scelta: chi ha gareggiato piu' chi e'

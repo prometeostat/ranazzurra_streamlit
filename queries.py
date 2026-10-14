@@ -65,6 +65,32 @@ SESSIONE_LABEL = """
 
 
 # ══════════════════════════════════════════════════════════════════
+# Finestra delle iscrizioni
+# ══════════════════════════════════════════════════════════════════
+# Una regola sola, scritta qui una volta: l'atleta scrive dai GIORNI_ANTICIPO
+# giorni prima dell'apertura ufficiale fino al giorno PRIMA della chiusura,
+# estremi compresi. L'ultimo giorno resta alla squadra per portare le adesioni
+# sul portale federale, quindi dal giorno di `close_registration_date` in poi
+# non si iscrive e non si modifica piu' niente: si guarda.
+# Vale per tutte e tre le porte (Iscriviti, Modifica, il bottone in Agenda) e
+# per il controllo lato server, che e' la stessa condizione riletta prima di
+# scrivere. I numeri stanno anche in `crud.GIORNI_ANTICIPO` e
+# `crud.GIORNI_CODA`, che li usano per i messaggi: cambiandoli qui vanno
+# cambiati anche la'.
+# Richiede l'alias co su competitions.
+FINESTRA_APERTA = """
+    (co.open_registration_date IS NOT NULL
+     AND co.close_registration_date IS NOT NULL
+     AND CURRENT_DATE BETWEEN (co.open_registration_date - INTERVAL '30 days')
+                          AND (co.close_registration_date - INTERVAL '1 day'))
+"""
+
+# Primo e ultimo giorno in cui l'atleta puo' scrivere, per i messaggi a video.
+PRIMO_GIORNO = "(co.open_registration_date - INTERVAL '30 days')::date"
+ULTIMO_GIORNO = "(co.close_registration_date - INTERVAL '1 day')::date"
+
+
+# ══════════════════════════════════════════════════════════════════
 # Anagrafica
 # ══════════════════════════════════════════════════════════════════
 
@@ -927,9 +953,9 @@ UPDATE athlete_races SET is_deleted = TRUE, deletion_user_id = %s WHERE id = %s
 # che c'e' gia'. Un indice unico parziale su (race_id, athlete_id) dove
 # is_deleted = FALSE impedisce il doppione a database, non solo nell'app.
 
-# Manifestazioni iscrivibili oggi. La finestra parte 30 giorni prima della
-# data di apertura ufficiale e arriva alla chiusura, estremi compresi: la
-# squadra raccoglie le adesioni in anticipo rispetto al portale federale.
+# Manifestazioni su cui l'atleta puo' scrivere oggi: la finestra e' quella di
+# FINESTRA_APERTA, dai 30 giorni prima dell'apertura ufficiale al giorno
+# prima della chiusura.
 SIGNUP_MEETS_SQL = """
 SELECT
     co.id                       AS comp_id,
@@ -938,6 +964,7 @@ SELECT
     co.end_date,
     co.open_registration_date   AS apertura,
     co.close_registration_date  AS chiusura,
+    """ + ULTIMO_GIORNO + """   AS ultimo_giorno,
     co.max_races_per_athlete    AS max_gare,
     co.is_fin,
     co.website_link,
@@ -949,10 +976,7 @@ FROM competitions co
 LEFT JOIN companies org ON org.id = co.organizer_company_id
                        AND org.is_deleted = FALSE
 WHERE co.is_deleted = FALSE
-  AND co.open_registration_date  IS NOT NULL
-  AND co.close_registration_date IS NOT NULL
-  AND CURRENT_DATE BETWEEN (co.open_registration_date - INTERVAL '30 days')
-                       AND co.close_registration_date
+  AND """ + FINESTRA_APERTA + """
 ORDER BY co.start_date
 """
 
@@ -966,12 +990,10 @@ SELECT
     co.start_date,
     co.open_registration_date   AS apertura,
     co.close_registration_date  AS chiusura,
+    """ + PRIMO_GIORNO + """    AS anticipo,
+    """ + ULTIMO_GIORNO + """   AS ultimo_giorno,
     co.max_races_per_athlete    AS max_gare,
-    (co.open_registration_date - INTERVAL '30 days')::date AS anticipo,
-    (co.open_registration_date IS NOT NULL
-     AND co.close_registration_date IS NOT NULL
-     AND CURRENT_DATE BETWEEN (co.open_registration_date - INTERVAL '30 days')
-                          AND co.close_registration_date) AS aperta
+    """ + FINESTRA_APERTA + """ AS aperta
 FROM competitions co
 WHERE co.id = %s AND co.is_deleted = FALSE
 """
@@ -1125,10 +1147,9 @@ SELECT
     co."type"                                AS manifestazione,
     co.start_date,
     co.close_registration_date               AS chiusura,
-    (co.open_registration_date IS NOT NULL
-     AND co.close_registration_date IS NOT NULL
-     AND CURRENT_DATE BETWEEN (co.open_registration_date - INTERVAL '30 days')
-                          AND co.close_registration_date) AS aperta,
+    """ + ULTIMO_GIORNO + """                AS ultimo_giorno,
+    """ + FINESTRA_APERTA + """              AS aperta,
+    COALESCE(co.start_date >= CURRENT_DATE, FALSE) AS futura,
     r.name                                   AS gara,
     re.is_relay,
     r.pool_length,
@@ -1150,7 +1171,14 @@ JOIN distances   d  ON d.id  = re.distance_id   AND d.is_deleted  = FALSE
 WHERE ar.athlete_id = %s
   AND ar.is_deleted = FALSE
   AND (co.start_date >= CURRENT_DATE OR ar.entry_time IS NOT NULL)
-ORDER BY co.start_date, """ + ORDINE_PROGRAMMA + """,
+-- Prima quello che c'e' da nuotare, dalla gara piu' vicina; poi lo storico,
+-- dalla piu' recente. Il CASE tiene insieme i due ordini opposti: sulle
+-- future da' la data (crescente), sulle passate e' NULL per tutte e quindi
+-- si passa alla chiave dopo, che e' la data decrescente.
+ORDER BY COALESCE(co.start_date >= CURRENT_DATE, FALSE) DESC,
+         CASE WHEN co.start_date >= CURRENT_DATE THEN co.start_date END,
+         co.start_date DESC,
+         """ + ORDINE_PROGRAMMA + """,
          re.is_relay, s.name, r.name
 """
 
@@ -1213,10 +1241,7 @@ SELECT
       WHERE co.is_deleted = FALSE)                 AS manifestazioni,
     (SELECT COUNT(*) FROM competitions co
       WHERE co.is_deleted = FALSE
-        AND co.open_registration_date  IS NOT NULL
-        AND co.close_registration_date IS NOT NULL
-        AND CURRENT_DATE BETWEEN (co.open_registration_date - INTERVAL '30 days')
-                             AND co.close_registration_date) AS iscrivibili,
+        AND """ + FINESTRA_APERTA + """)           AS iscrivibili,
     (SELECT COUNT(*) FROM access_log)              AS accessi
 """
 

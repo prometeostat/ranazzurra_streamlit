@@ -1,8 +1,10 @@
 """
 views/cerca.py — pagina indice della sezione Cerca.
 
-Tre porte d'ingresso: la scheda di un atleta, le classifiche di squadra e i
-risultati di una manifestazione, gara per gara.
+Quattro porte d'ingresso: le proprie iscrizioni, la scheda di un atleta, le
+classifiche di squadra e i risultati di una manifestazione, gara per gara.
+Le iscrizioni stanno per prime perche' sono l'unica voce con una scadenza:
+le altre tre si consultano quando capita, quella no.
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import streamlit as st
 
 from views._common import page_header
 
-page_header("Cerca", "Atleti, classifiche e manifestazioni")
+page_header("Cerca", "Iscrizioni, atleti, classifiche e manifestazioni")
 
 
 def _voce(icona: str, titolo: str, sottotitolo: str, pagina: str, chiave: str) -> None:
@@ -21,6 +23,8 @@ def _voce(icona: str, titolo: str, sottotitolo: str, pagina: str, chiave: str) -
         st.switch_page(pagina)
 
 
+_voce("📝", "Iscrizioni", "Iscriviti, modifica e controlla le tue gare",
+      "views/iscrizioni.py", "iscrizioni")
 _voce("🏊", "Atleta", "Tempi, personali e storico gara per gara",
       "views/scheda.py", "scheda")
 _voce("🏆", "Classifiche", "I migliori tempi di squadra, per specialita'",

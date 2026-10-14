@@ -10,6 +10,9 @@ dice, perche' sono due grandezze diverse nello stesso campo.
 Il bottone non e' un vezzo: l'elenco va letto dal database e con "tutte le
 stagioni" nel menu ci sono centinaia di manifestazioni. Cosi' si scorre il
 menu senza che l'app parta a interrogare a ogni passaggio.
+
+Qui si cerca e si consulta, non si gestiscono iscrizioni: per quelle c'e'
+Cerca, Iscrizioni, e il bottone accanto a ogni manifestazione in Agenda.
 """
 from __future__ import annotations
 
@@ -19,7 +22,6 @@ import pandas as pd
 import streamlit as st
 
 import auth
-import crud
 import data
 import season as season_mod
 from theme import fmt_time, pool_label
@@ -42,17 +44,6 @@ def _scorda() -> None:
     appesa a una scelta che non e' piu' quella a video."""
     st.session_state.pop("mf_vista", None)
 
-
-# Seconda porta per le iscrizioni, oltre al bottone in Agenda: qui dentro
-# ci sono le manifestazioni gia' nuotate, quelle aperte alle iscrizioni
-# quasi mai, quindi il bottone porta alla pagina e la fa scegliere li'.
-_io = auth.current_user() or {}
-if _io.get("athlete_id") is not None:
-    _aperte = len(crud.manifestazioni_iscrivibili())
-    if _aperte:
-        if st.button(f"📝  Iscrizioni aperte · {_aperte} manifestazioni",
-                     use_container_width=True, key="mf_vai_iscrizioni"):
-            st.switch_page("views/iscrizioni_nuove.py")
 
 inline_filters("mf", pool=False, on_fin=_scorda)
 

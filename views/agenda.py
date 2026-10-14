@@ -113,24 +113,16 @@ def _scheda(r: dict, futura: bool) -> str:
 def _stato_iscrizioni(r: dict) -> tuple[bool, str]:
     """(si puo' cliccare, perche' no).
 
-    La finestra parte GIORNI_ANTICIPO giorni prima dell'apertura ufficiale e
-    finisce alla chiusura, estremi compresi: le adesioni si raccolgono prima
-    di portarle sul portale federale. Senza le due date non si clicca.
-    La verifica vera la rifa' comunque crud prima di scrivere: qui si decide
-    solo come disegnare il bottone.
+    La finestra la decide `crud.stato_finestra`, che e' la stessa regola usata
+    dalle pagine di iscrizione e dal controllo lato server: dai 30 giorni
+    prima dell'apertura ufficiale al giorno prima della chiusura. Qui si
+    sceglie solo come disegnare il bottone; la verifica vera la rifa' comunque
+    crud rileggendo il database prima di scrivere.
     """
     if auth.sola_lettura():
         return False, "Stai guardando come un altro atleta: sola lettura"
-    apertura = pd.to_datetime(r.get("open_registration_date"), errors="coerce")
-    chiusura = pd.to_datetime(r.get("close_registration_date"), errors="coerce")
-    if pd.isna(apertura) or pd.isna(chiusura):
-        return False, "Date di iscrizione non ancora registrate"
-    da = apertura.date() - _dt.timedelta(days=crud.GIORNI_ANTICIPO)
-    if OGGI < da:
-        return False, f"Si parte il {da.strftime('%d/%m/%Y')}"
-    if OGGI > chiusura.date():
-        return False, f"Chiuse il {chiusura.strftime('%d/%m/%Y')}"
-    return True, ""
+    return crud.stato_finestra(r.get("open_registration_date"),
+                               r.get("close_registration_date"), OGGI)
 
 
 futuri = manif[manif["start_date"].dt.date >= OGGI].sort_values("start_date")

@@ -26,8 +26,9 @@ raccoglie solo quello che serve per lavorarci sopra senza rompere niente.
 basso), `auth.py`, `db.py`, `season.py`, `queries.py` (tutto l'SQL),
 `data.py` (loader cachati), `crud.py` (scritture), `theme.py` (CSS e helper
 Plotly), `pwa.py`, `static/`, `views/` (una pagina per file, pezzi condivisi
-in `views/_common.py`). Le pagine admin si registrano solo se
-`auth.is_admin()`. `views/gare.py` non e' piu' in navigazione.
+in `views/_common.py` e, per le iscrizioni, in `views/_iscrizioni_form.py`).
+Le pagine admin si registrano solo se `auth.is_admin()`. `views/gare.py` non
+e' piu' in navigazione.
 
 ## Database
 
@@ -89,6 +90,18 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - `st.data_editor` **non accetta uno Styler**: una tabella o si colora o si
   edita. Dove servono tutti e due, il colore diventa una colonna (il pallino
   del certificato in `views/anagrafica.py`).
+- **`st.date_input` senza `min_value` e `max_value` ammette solo dieci anni
+  intorno al valore che ha in mano**, e rifiuta il resto con un "Date set
+  outside allowed range" che non spiega niente. Ogni campo data va dichiarato
+  con i suoi limiti: le manifestazioni usano `crud.PRIMA_DATA_GARA` e
+  `crud.ULTIMA_DATA_GARA` (01/01/1990 - 31/12/2999) su tutti e otto i campi
+  dei tre form, e la stessa regola la ricontrolla
+  `crud.valida_manifestazione`. Data di nascita e scadenza del certificato
+  hanno i loro, in `views/anagrafica.py` e in `auth.py`. Attenzione anche ai
+  valori di partenza: un `value` fuori dall'intervallo fa saltare il widget
+  prima di disegnarlo, per questo `_anno_dopo()` della clonazione tiene il
+  risultato dentro i limiti. `st.column_config.DateColumn` invece non ha
+  questo difetto: senza limiti non limita.
 - `st.data_editor` tiene le celle toccate **per posizione di riga**: se le
   righe cambiano (filtro, ordinamento, ricerca) le modifiche in sospeso
   finiscono su altri. La chiave del widget deve portare dentro un'impronta
@@ -114,6 +127,22 @@ in `views/_common.py`). Le pagine admin si registrano solo se
 - Le regole delle iscrizioni (finestra aperta, limite individuali,
   proprieta' della riga) stanno in `crud.salva_iscrizioni` e rileggono il
   database: l'interfaccia disabilita i bottoni, non autorizza.
+- **La finestra delle iscrizioni e' una sola regola, scritta una volta.**
+  In SQL e' `queries.FINESTRA_APERTA`, che le query incollano invece di
+  riscriversela (`SIGNUP_MEETS_SQL`, `SIGNUP_WINDOW_SQL`, `MY_SIGNUPS_SQL`,
+  `GESTIONE_CONTEGGI_SQL`); in Python e' `crud.stato_finestra()`, che usa
+  Agenda per accendere il bottone. Va dai 30 giorni prima dell'apertura
+  (`crud.GIORNI_ANTICIPO`) al **giorno prima** della chiusura
+  (`crud.GIORNI_CODA`), estremi compresi: l'ultimo giorno resta alla squadra
+  per il portale federale. Vale identica per Iscriviti e per Modifica, non
+  ci sono due scadenze. `open_registration_date` e `close_registration_date`
+  sono `date`, non timestamp, e il confronto e' su `CURRENT_DATE`: il server
+  Aiven e' in GMT, quindi fra mezzanotte e le due ora italiana la data del
+  database e' ancora quella del giorno prima.
+- Le due pagine delle iscrizioni sono gusci: il modulo sta in
+  `views/_iscrizioni_form.py` e `disegna(modo)` lo serve a `Iscriviti`
+  (`"nuova"`) e a `Modifica` (`"modifica"`). Un fix alle gare, ai tempi o al
+  salvataggio si fa li' una volta sola; nei gusci non va messa logica.
 - **Emulazione**: `auth.current_user()` puo' restituire un atleta emulato
   dall'amministratore, `auth.utente_vero()` restituisce sempre chi e'
   collegato davvero. I permessi per avviare o chiudere un'emulazione si
@@ -205,10 +234,16 @@ locale. Offline e push non sono ottenibili con Streamlit.
 - Stile visivo: glassmorphism, palette blu/aqua/teal, Bebas Neue e Barlow
   Condensed.
 - Quando una funzionalita' cambia, aggiornare la sezione del `README.md`.
-- **A ogni rilascio**: alzare `VERSIONE` e `DATA_RILASCIO` in `version.py` e
-  aggiungere il blocco in `CHANGELOG.md`. Quello e' il file che leggono gli
-  atleti dalla pagina Novita', quindi si scrive in italiano corrente e per
-  funzione, non per commit: niente nomi di file, di colonne o di query.
+- **La versione non si alza da sola.** `VERSIONE` in `version.py` resta
+  **1.0.0** finche' non e' Mirko a dire di cambiarla: la 1.0.0 non e' ancora
+  stata divulgata, e una modifica fatta oggi non vale un numero nuovo. Chi
+  lavora qui aggiunge quello che ha fatto **dentro il blocco 1.0.0** di
+  `CHANGELOG.md`, senza aprirne uno nuovo e senza toccare `DATA_RILASCIO`.
+  Il changelog e' il file che leggono gli atleti dalla pagina Novita', quindi
+  si scrive in italiano corrente e per funzione, non per commit: niente nomi
+  di file, di colonne o di query. La versione sta scritta in un posto solo,
+  `version.py`: a video ci arriva sempre da `version.etichetta()`, mai a
+  mano.
 
 ## Verifica prima di consegnare
 
@@ -238,4 +273,6 @@ in `views/manifestazioni.py` (con `clona_manifestazione` in `crud.py` e
 `organizer_company_id` nelle tre query delle manifestazioni),
 **interruttore "Solo il miglior tempo per stagione"** in `views/scheda.py`,
 **sezione Gare** dentro Modifica manifestazione, **flag FIN**, e tutta la
-parte **iscrizioni** (`views/iscrizioni*.py`).
+parte **iscrizioni** (`views/iscrizioni*.py` e
+`views/_iscrizioni_form.py`), con le sue tre porte: Iscriviti, Modifica e
+Vedi le mie iscrizioni.

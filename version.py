@@ -23,7 +23,7 @@ _FILE = Path(__file__).with_name("CHANGELOG.md")
 
 
 def etichetta() -> str:
-    """'v1.0.0 · 13/10/2026', per le righe di piede."""
+    """'v1.0.0 · 14/10/2026', per le righe di piede."""
     return f"v{VERSIONE} · {DATA_RILASCIO.strftime('%d/%m/%Y')}"
 
 

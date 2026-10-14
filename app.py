@@ -66,11 +66,14 @@ PAGINE = {
     "iscrizioni": st.Page("views/iscrizioni.py", title="Iscrizioni",
                           url_path="iscrizioni"),
     "iscrizioni_nuove": st.Page("views/iscrizioni_nuove.py",
-                                title="Nuove iscrizioni",
-                                url_path="nuove-iscrizioni"),
+                                title="Iscriviti",
+                                url_path="iscriviti"),
+    "iscrizioni_modifica": st.Page("views/iscrizioni_modifica.py",
+                                   title="Modifica iscrizioni",
+                                   url_path="modifica-iscrizioni"),
     "iscrizioni_mie": st.Page("views/iscrizioni_mie.py",
-                              title="Lista iscrizioni",
-                              url_path="lista-iscrizioni"),
+                              title="Le mie iscrizioni",
+                              url_path="le-mie-iscrizioni"),
     "profilo": st.Page("views/profilo.py", title="Profilo", url_path="profilo"),
     "novita": st.Page("views/novita.py", title="Novità", url_path="novita"),
 }
@@ -100,7 +103,7 @@ VOCI = [
     ("confronta", "⚖️", "Confronta", {"confronta"}),
     ("cerca", "🔍", "Cerca",
      {"cerca", "scheda", "classifiche", "risultati", "iscrizioni",
-      "iscrizioni_nuove", "iscrizioni_mie"}),
+      "iscrizioni_nuove", "iscrizioni_modifica", "iscrizioni_mie"}),
     ("profilo", "👤", "Profilo", {"profilo", "novita"}),
 ]
 if auth.is_staff():

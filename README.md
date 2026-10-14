@@ -22,16 +22,18 @@ ranazzurra_streamlit/
 ├── static/             manifest.json e icone (servite da /app/static/)
 ├── views/
 │   ├── agenda.py       calendario manifestazioni, passate e future
-│   ├── cerca.py        indice: atleta, classifiche, manifestazioni
+│   ├── cerca.py        indice: iscrizioni, atleta, classifiche, manifestazioni
 │   ├── scheda.py       selettore atleta, riepilogo, ultime gare, elenco tempi
 │   ├── confronto.py    due atleti testa a testa, gare in comune
 │   ├── accessi.py      registro accessi, solo admin
 │   ├── classifiche.py  top 5 per specialita', filtro categoria, M e F divisi
 │   ├── risultati.py    una manifestazione, gara per gara, con gli iscritti
 │   ├── profilo.py      account, preferiti, tema, installazione
-│   ├── iscrizioni.py   indice: nuove iscrizioni e lista
-│   ├── iscrizioni_nuove.py  l'atleta si iscrive alle gare
-│   ├── iscrizioni_mie.py    le proprie iscrizioni, per manifestazione
+│   ├── iscrizioni.py   indice: iscriviti, modifica, vedi le mie iscrizioni
+│   ├── _iscrizioni_form.py  il modulo delle iscrizioni, usato dalle due sotto
+│   ├── iscrizioni_nuove.py  Iscriviti: guscio sul modulo, modo "nuova"
+│   ├── iscrizioni_modifica.py  Modifica: guscio sul modulo, modo "modifica"
+│   ├── iscrizioni_mie.py    le proprie iscrizioni, passate e future
 │   ├── iscrizioni_admin.py  iscrizioni ricevute ed Excel (staff)
 │   ├── gestione.py     indice dell'area riservata (staff e admin)
 │   ├── anagrafica.py   anagrafica atleti (solo admin)
@@ -153,7 +155,7 @@ comprese le sezioni riservate che spariscono. Serve a capire perche' uno
 "non trova" una gara o un'iscrizione, senza toccargli la password.
 
 **E' in sola lettura.** Durante l'emulazione si spengono il bottone
-Iscriviti in Agenda, la pagina Nuove iscrizioni, il cambio password e
+Iscriviti in Agenda, le pagine Iscriviti e Modifica, il cambio password e
 l'uscita: una riga scritta cosi' sarebbe indistinguibile da una scritta
 dall'atleta, perche' `creation_user_id` e' l'utente tecnico e non chi sta
 usando l'app. Una fascia in cima a ogni pagina dice chi si sta guardando e
@@ -415,6 +417,38 @@ della manifestazione che porta ai risultati (`pdf_link`, con il sito come
 riserva). Il punteggio FIN e il numero di gare sono stati tolti: in una
 classifica per specialita' non aggiungevano niente.
 
+### Il pari merito
+
+Due atleti con lo stesso tempo **al centesimo** hanno fatto lo stesso
+risultato e stanno nella stessa posizione: 1, 1, 2, 2, 3, numerazione
+competitiva, senza buchi. Il confronto si fa sui centesimi interi e non sui
+secondi in virgola mobile, perche' la stessa prestazione puo' uscire 28.9 da
+una parte e 28.900000000000002 dall'altra e il pari merito si romperebbe
+senza che a video si veda niente. Le colonne che mettono in fila chi e' alla
+pari (prima chi quel tempo l'ha nuotato prima, poi il cognome) servono solo a
+dare un ordine stabile: la posizione dipende dal tempo e basta.
+
+Il taglio ai primi cinque si allarga a tutto il pari merito: se la quinta e
+la sesta riga hanno lo stesso tempo escono tutte e due, e la tabella ne
+mostra sei. Una posizione non si spezza a meta' per far tornare i conti.
+Prima qui c'era un `head(5)` secco e, nelle specialita' dove il quinto tempo
+e' condiviso, un atleta spariva dalla classifica a cui apparteneva.
+
+Il calcolo sta tutto in `views/_common.classifica()`, che ordina, tiene una
+riga sola per atleta (`uno_per="athlete_id"`), assegna le posizioni e taglia.
+La riga che sopravvive e' quella **intera** della gara in cui quel tempo e'
+stato nuotato: data, manifestazione e link restano i suoi, anche quando due
+atleti a pari merito vengono da due manifestazioni diverse. Prima c'era un
+`groupby().first()`, che prende il primo valore non nullo colonna per
+colonna: su un atleta con piu' gare poteva mettere sotto al tempo di una
+manifestazione il link ai risultati di un'altra.
+
+Il filtro **Manifestazioni** (Tutte, Ufficiali FIN, non ufficiali) decide
+quali gare entrano, e lo decide **nella SQL** con il marcatore `/*FIN*/`:
+cambiando filtro cambia l'insieme dei tempi e quindi la classifica, ma le
+posizioni restano corrette dentro l'insieme scelto e nessuno sparisce per
+effetto del taglio.
+
 Dentro ci sono anche **gli atleti non piu' attivi**: un tempo fatto con la
 squadra resta un tempo della squadra, e chi ha smesso non sparisce dagli
 archivi. Nessun rischio di doppioni, in anagrafica non ci sono omonimi fra
@@ -426,10 +460,15 @@ si vuole marcarli nell'elenco.
 
 ## Manifestazioni
 
-Terza porta di Cerca, accanto ad Atleta e Classifiche, e pagina sua
+Ultima porta di Cerca, dopo Iscrizioni, Atleta e Classifiche, e pagina sua
 (`views/risultati.py`, url `/manifestazioni`). Ha preso il posto del blocco
 "Ultime manifestazioni", che mostrava quattro schede senza poterci entrare
 dentro.
+
+Qui si cerca e si consulta, e basta: le iscrizioni si fanno da **Cerca >
+Iscrizioni** e dal bottone in Agenda. La scorciatoia "Iscrizioni aperte" che
+stava in cima a questa pagina e' stata tolta, perche' mischiava le due cose
+in un posto dove quasi sempre si guarda il passato.
 
 Si procede in tre passi: si sceglie il **Periodo** (e, volendo, se vedere
 solo le ufficiali FIN), si sceglie la **Manifestazione**, si preme
@@ -500,37 +539,66 @@ collegato e' accesa, come nelle classifiche.
 ## Iscrizioni alle gare
 
 L'atleta si iscrive da solo, dentro la finestra decisa dalla manifestazione.
-**Cerca > Iscrizioni** e' l'indice (`views/iscrizioni.py`) con due porte:
+**Cerca > Iscrizioni** e' l'indice (`views/iscrizioni.py`), prima voce della
+sezione Cerca, con tre porte:
 
-- **Nuove iscrizioni** (`views/iscrizioni_nuove.py`, url
-  `/nuove-iscrizioni`), dove ci si iscrive;
-- **Lista iscrizioni** (`views/iscrizioni_mie.py`, url `/lista-iscrizioni`),
-  dove si guarda quello che si e' gia' fatto.
+- **Iscriviti** (`views/iscrizioni_nuove.py`, url `/iscriviti`): propone
+  tutte le manifestazioni su cui oggi si puo' scrivere, con le gare gia'
+  scelte spuntate;
+- **Modifica** (`views/iscrizioni_modifica.py`, url `/modifica-iscrizioni`):
+  propone solo le manifestazioni **ancora da nuotare** in cui l'atleta ha
+  davvero delle gare. Quelle col termine scaduto restano in elenco, ma si
+  aprono in sola lettura con scritto quando era il termine;
+- **Vedi le mie iscrizioni** (`views/iscrizioni_mie.py`, url
+  `/le-mie-iscrizioni`): tutto lo storico, passato e futuro, da guardare.
 
-Alla prima si arriva anche dal bottone **Iscriviti** in Agenda e dalla
-scorciatoia in cima a Cerca > Manifestazioni.
+Le prime due sono la stessa pagina: il modulo sta in
+`views/_iscrizioni_form.py` e le due voci sono due gusci che lo chiamano con
+un modo diverso (`"nuova"` e `"modifica"`). Cambiano l'elenco proposto e le
+parole a video; gare, tempi, limite e salvataggio sono gli stessi, perche'
+scegliere le gare e cambiarle sono la stessa operazione.
 
-### Lista iscrizioni
+A Iscriviti si arriva anche dal bottone **Iscriviti** in Agenda. In Cerca >
+Manifestazioni **non c'e' piu'** la scorciatoia alle iscrizioni: quella
+pagina cerca e consulta, non gestisce.
+
+### Vedi le mie iscrizioni
 
 Un filtro solo, che parte **vuoto** e contiene solo le manifestazioni per
 cui si e' davvero fatta un'iscrizione (le manifestazioni in programma piu'
-quelle passate con `entry_time` valorizzato). Scelta la manifestazione, la
-tabella mostra le sue gare con tipo, vasca, tempo d'iscrizione, **giornata,
-fascia oraria e numero di programma**, e quando c'e' il tempo di gara. Le
-righe seguono l'ordine in cui si nuota, con le gare senza programma in
-fondo e i trattini al posto delle tre colonne. Se la finestra e' ancora
-aperta, un bottone riporta a Nuove iscrizioni con quella manifestazione
-gia' selezionata; se e' chiusa, lo dice.
+quelle passate con `entry_time` valorizzato). L'elenco mette **prima quelle
+da nuotare**, dalla piu' vicina, poi lo storico dalla piu' recente, e marca
+le prime con "da nuotare"; l'ordine lo costruisce `MY_SIGNUPS_SQL`, non la
+pagina. Scelta la manifestazione, la tabella mostra le sue gare con tipo,
+vasca, **stato** (Iscritto, Disponibilita' per le staffette, Nuotata quando
+c'e' il tempo), tempo d'iscrizione, **giornata, fascia oraria e numero di
+programma**, e il tempo di gara. Le righe seguono l'ordine in cui si nuota,
+con le gare senza programma in fondo e i trattini al posto delle tre
+colonne. La scheda in alto dice se le iscrizioni si possono ancora cambiare
+e fino a quando; se si puo', un bottone porta a Modifica con quella
+manifestazione gia' selezionata. Senza nessuna iscrizione la pagina offre il
+bottone per andare a Iscriviti.
 
 ### La finestra
 
 Vale `competitions.open_registration_date` e `close_registration_date`, due
-`date`, **piu' 30 giorni di anticipo**: si raccoglie dalle date di apertura
-meno trenta fino alla chiusura, estremi compresi, perche' la squadra mette
-insieme le adesioni prima di portarle sul portale federale. I giorni sono
-in `crud.GIORNI_ANTICIPO` e la stessa regola sta nelle query
-(`SIGNUP_MEETS_SQL`, `SIGNUP_WINDOW_SQL`, `MY_SIGNUPS_SQL`): se cambia il
-numero, va cambiato in tutti e due i posti.
+`date`, **piu' 30 giorni di anticipo in testa e un giorno di coda**: si
+scrive dalla data di apertura meno trenta fino al **giorno prima** della
+chiusura, estremi compresi. L'anticipo serve perche' la squadra mette
+insieme le adesioni prima di portarle sul portale federale; il giorno di
+coda serve a portarcele davvero, quindi dal giorno di
+`close_registration_date` in poi non si iscrive e non si modifica piu'
+niente, si guarda. Vale allo stesso modo per Iscriviti, per Modifica e per
+il bottone in Agenda: non ci sono due scadenze diverse.
+
+La condizione sta scritta **una volta sola** in `queries.FINESTRA_APERTA`, e
+le query che la usano la incollano da li' (`SIGNUP_MEETS_SQL`,
+`SIGNUP_WINDOW_SQL`, `MY_SIGNUPS_SQL`, `GESTIONE_CONTEGGI_SQL`). I due
+numeri stanno anche in `crud.GIORNI_ANTICIPO` e `crud.GIORNI_CODA`, che li
+usano per i messaggi: se cambiano, vanno cambiati in tutti e due i posti.
+Lato Python la stessa regola la risponde `crud.stato_finestra(apertura,
+chiusura)`, che e' quella che disegna il bottone in Agenda e i messaggi
+nelle pagine.
 
 Fuori da li' non si scrive niente, e la verifica non sta nel bottone
 disabilitato: `crud.salva_iscrizioni` rilegge le date a database prima di
@@ -541,7 +609,7 @@ In **Agenda > In programma** ogni manifestazione futura ha il bottone
 quadrato **Iscriviti** di fianco alla scheda, non sotto (lo stile sta in
 `theme.py`, agganciato alla chiave `isc_`). E' acceso quando si puo'
 davvero, spento e tratteggiato quando le date mancano, quando mancano piu'
-di trenta giorni all'apertura o quando la chiusura e' passata: il motivo
+di trenta giorni all'apertura o quando il termine e' passato: il motivo
 sta nel tooltip. Spento resta comunque li', cosi' si vede che quella gara
 una iscrizione ce l'ha.
 
@@ -611,11 +679,13 @@ decide l'allenatore. Restano fuori dal limite delle individuali.
 
 ### Modifica, cancellazione e permessi
 
-Finche' la finestra e' aperta l'atleta cambia i tempi, aggiunge e toglie
-gare; la cancellazione e' la solita soft delete. Una gara che ha gia' il
-**tempo di gara** non si puo' togliere da qui: l'app lo dice e manda
-dall'amministratore. A finestra chiusa resta l'elenco **Le mie iscrizioni**,
-in sola lettura.
+Finche' la finestra e' aperta, cioe' fino al giorno prima della chiusura
+ufficiale, l'atleta cambia i tempi, aggiunge e toglie gare dalla pagina
+**Modifica**; la cancellazione e' la solita soft delete. Una gara che ha
+gia' il **tempo di gara** non si puo' togliere da qui: l'app lo dice e manda
+dall'amministratore. Dopo il termine la stessa pagina mostra le gare in sola
+lettura e dice quando scadeva, e lo stesso elenco si ritrova in **Vedi le
+mie iscrizioni**.
 
 Il salvataggio **rilegge lo stato a database un attimo prima di scrivere**,
 senza passare dal cache: fra il momento in cui la pagina ha caricato le gare
@@ -755,9 +825,15 @@ Niente barra laterale: e' nascosta via CSS e `st.navigation` gira con
 una **barra fissa in basso**, come in un'app: Agenda, Confronta, Cerca,
 Profilo e, solo per l'amministratore, Gestione.
 
-Cerca e Gestione sono pagine-indice: la prima porta ad Atleta, Classifiche e
-Manifestazioni, la seconda alle due anagrafiche e al registro accessi. La
-voce della barra resta accesa anche quando sei in una sottopagina.
+Cerca e Gestione sono pagine-indice: la prima porta a Iscrizioni, Atleta,
+Classifiche e Manifestazioni, la seconda alle due anagrafiche e al registro
+accessi. La voce della barra resta accesa anche quando sei in una
+sottopagina.
+
+In Cerca le **Iscrizioni** stanno per prime, sopra Atleta, perche' sono
+l'unica voce con una scadenza: le altre tre si consultano quando capita,
+quella no. Iscrizioni e' a sua volta un indice, con le tre porte descritte
+piu' sopra.
 
 Le voci sono schede cliccabili per intero, senza un bottone "Apri" a parte:
 sono `st.button` con etichetta "icona, riga vuota, titolo, riga vuota,
@@ -795,6 +871,11 @@ legge a video e' sempre quello che gira davvero. Le novita' stanno in
 corrente, perche' le leggono gli atleti e non gli sviluppatori. Tre numeri:
 il primo cambia quando cambia il modo di usare l'app, il secondo per una
 funzione nuova, il terzo per le correzioni.
+
+**La versione non si alza da sola.** Resta **1.0.0** finche' non e' Mirko a
+dire di cambiarla: la 1.0.0 non e' ancora stata divulgata, quindi quello che
+si fa oggi entra nel blocco 1.0.0 del changelog, senza aprirne uno nuovo e
+senza toccare `DATA_RILASCIO`.
 
 La pagina **Novita'** (`views/novita.py`, url `/novita`) e' aperta a tutti e
 mostra il changelog cosi' com'e'. Ci si arriva da un collegamento fisso in
@@ -997,6 +1078,28 @@ risultati collegati restano a database e tornano appena la riattivi. Il form
 controlla che la fine non preceda l'inizio, che le iscrizioni non chiudano
 dopo la partenza e che i link comincino per http.
 
+### Fin dove arriva il calendario
+
+Le quattro date (inizio, fine, apertura e chiusura iscrizioni) si possono
+mettere **dal 01/01/1990 al 31/12/2999**, estremi compresi. I due limiti
+stanno in `crud.PRIMA_DATA_GARA` e `crud.ULTIMA_DATA_GARA`, li dichiarano
+tutti e otto i campi data (form di inserimento, di modifica e di clonazione)
+e li ricontrolla `crud.valida_manifestazione`, perche' una data puo' arrivare
+anche da un clone e non solo dal calendario.
+
+Non e' un vezzo: **`st.date_input` senza `min_value` e `max_value` ammette
+solo dieci anni intorno al valore che ha in mano**. Inserendo una gara del
+2003 il calendario rispondeva *"Date set outside allowed range. Please select
+a date between 11/07/2017 and 11/07/2037"*, dove quei due estremi erano la
+data che il campo aveva in quel momento piu' e meno dieci anni. Ogni campo
+data nuovo va quindi dichiarato con i suoi limiti: lo fanno gia' anche la
+data di nascita e la scadenza del certificato in Anagrafica atleti, e le date
+di nascita nelle schermate di accesso.
+
+Il clone sposta le date di un anno avanti e il risultato resta dentro
+l'intervallo: una data fuori limite farebbe saltare il campo prima ancora di
+disegnarlo.
+
 ### Le gare dentro la manifestazione
 
 Aprendo **Modifica** di una manifestazione, sotto al form compare la sezione
@@ -1056,7 +1159,7 @@ prima. Non sono state dedotte da niente: a database non c'era nessun orario,
 l'unica traccia sarebbe stato l'id di inserimento, e sarebbe stata
 un'invenzione presentata come dato.
 
-Dove si vede: nelle **Nuove iscrizioni**, dove le gare individuali sono
+Dove si vede: in **Iscriviti** e **Modifica**, dove le gare individuali sono
 raggruppate per giornata e fascia nell'ordine in cui si nuotano, e in
 **Cerca > Manifestazioni**. La data compare nell'intestazione solo se le
 giornate sono piu' di una. Clonando una manifestazione fascia e ordine si

@@ -62,14 +62,20 @@ def _data(v):
 
 
 def _anno_dopo(v):
-    """La stessa data dell'anno prossimo. Il 29 febbraio diventa il 28."""
+    """
+    La stessa data dell'anno prossimo. Il 29 febbraio diventa il 28.
+
+    Il risultato resta dentro i limiti del calendario: un valore fuori
+    intervallo farebbe saltare il campo data prima ancora di disegnarlo.
+    """
     d = _data(v)
     if d is None:
         return None
     try:
-        return d.replace(year=d.year + 1)
+        dopo = d.replace(year=d.year + 1)
     except ValueError:
-        return d.replace(year=d.year + 1, day=28)
+        dopo = d.replace(year=d.year + 1, day=28)
+    return min(max(dopo, crud.PRIMA_DATA_GARA), crud.ULTIMA_DATA_GARA)
 
 
 def _vero(v) -> bool:
@@ -174,18 +180,22 @@ def _form(gara: dict | None) -> None:
         c1, c2 = st.columns(2)
         inizio = c1.date_input("Data inizio *",
                                value=OGGI if nuovo else _data(gara.get("start_date")),
-                               format="DD/MM/YYYY")
+                               format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                               max_value=crud.ULTIMA_DATA_GARA)
         fine = c2.date_input("Data fine",
                              value=OGGI if nuovo else _data(gara.get("end_date")),
-                             format="DD/MM/YYYY")
+                             format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                             max_value=crud.ULTIMA_DATA_GARA)
 
         c3, c4 = st.columns(2)
         apertura = c3.date_input("Apertura iscrizioni",
                                  value=None if nuovo else _data(gara.get("open_registration_date")),
-                                 format="DD/MM/YYYY")
+                                 format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                                 max_value=crud.ULTIMA_DATA_GARA)
         chiusura = c4.date_input("Chiusura iscrizioni",
                                  value=None if nuovo else _data(gara.get("close_registration_date")),
-                                 format="DD/MM/YYYY")
+                                 format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                                 max_value=crud.ULTIMA_DATA_GARA)
 
         c5, c6 = st.columns(2)
         attuale = "" if nuovo else (gara.get("timing") or "")
@@ -321,17 +331,21 @@ def _form_clona(elenco: pd.DataFrame) -> None:
 
         c1, c2 = st.columns(2)
         inizio = c1.date_input("Data inizio *", value=_anno_dopo(base.get("start_date")),
-                               format="DD/MM/YYYY")
+                               format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                               max_value=crud.ULTIMA_DATA_GARA)
         fine = c2.date_input("Data fine", value=_anno_dopo(base.get("end_date")),
-                             format="DD/MM/YYYY")
+                             format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                             max_value=crud.ULTIMA_DATA_GARA)
 
         c3, c4 = st.columns(2)
         apertura = c3.date_input("Apertura iscrizioni",
                                  value=_anno_dopo(base.get("open_registration_date")),
-                                 format="DD/MM/YYYY")
+                                 format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                                 max_value=crud.ULTIMA_DATA_GARA)
         chiusura = c4.date_input("Chiusura iscrizioni",
                                  value=_anno_dopo(base.get("close_registration_date")),
-                                 format="DD/MM/YYYY")
+                                 format="DD/MM/YYYY", min_value=crud.PRIMA_DATA_GARA,
+                                 max_value=crud.ULTIMA_DATA_GARA)
 
         c5, c6 = st.columns(2)
         attuale = base.get("timing") or ""

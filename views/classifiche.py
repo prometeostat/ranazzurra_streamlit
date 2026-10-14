@@ -20,7 +20,7 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_time, pool_label, rank_html, section
-from views._common import (apply_pool, fin_filter, inline_filters,
+from views._common import (apply_pool, classifica, fin_filter, inline_filters,
                            page_header, season_year)
 
 TOP = 5
@@ -96,22 +96,39 @@ def _classifica(sesso: str) -> None:
         st.info("Nessun tempo con questi filtri.")
         return
 
-    # Un atleta compare una volta sola, col suo tempo migliore fra quelli
-    # che restano dopo il filtro di categoria.
-    g = (g.sort_values("pb_sec").groupby("athlete_id", as_index=False).first()
-         .sort_values("pb_sec").head(TOP).reset_index(drop=True))
-    testa = float(g["pb_sec"].iloc[0])
+    # Tutto il lavoro in una chiamata sola, cosi' la regola sta scritta una
+    # volta e vale allo stesso modo per ogni specialita', categoria e filtro:
+    #   - un atleta compare una volta sola, con la riga INTERA della gara in
+    #     cui ha fatto il suo tempo migliore. Prima qui c'era un
+    #     groupby().first(), che prende il primo valore non nullo colonna per
+    #     colonna: su un atleta con piu' gare poteva mettere sotto al tempo di
+    #     una manifestazione il link ai risultati di un'altra;
+    #   - a parita' di tempo viene prima chi l'ha nuotato prima, e le gare dei
+    #     due restano due gare distinte;
+    #   - stesso tempo al centesimo, stessa posizione (1, 1, 2, 2, 3);
+    #   - il taglio ai primi TOP si allarga a tutto il parimerito, cosi' chi
+    #     e' quinto alla pari con un altro non sparisce dalla classifica.
+    g = classifica(g, "pb_sec", quanti=TOP, uno_per="athlete_id",
+                   a_parita=("comp_date", "full_name"))
+    if g.empty:
+        st.info("Nessun tempo con questi filtri.")
+        return
+    testa = int(g["tempo_cent"].iloc[0])
 
     righe = ""
-    for i, r in enumerate(g.to_dict("records"), start=1):
+    for r in g.to_dict("records"):
+        pos = int(r["posizione"])
         mio = me is not None and int(r["athlete_id"]) == int(me)
         sfondo = ' style="background:rgba(0,194,199,0.07)"' if mio else ""
-        gap = "—" if i == 1 else f'+{r["pb_sec"] - testa:.2f}'
+        # Il distacco si calcola sui centesimi, come la posizione: chi e' a
+        # pari merito col primo non deve ritrovarsi un +0.00 accanto.
+        gap = ("—" if pos == 1
+               else f'+{(int(r["tempo_cent"]) - testa) / 100:.2f}')
         # Due righe per atleta: nome e numeri sopra, data e manifestazione
         # sotto a tutta larghezza, se no il nome della gara resta un moncone.
         righe += (
             f'<tr{sfondo}>'
-            f'<td style="padding:9px 4px 2px;white-space:nowrap">{rank_html(i)}</td>'
+            f'<td style="padding:9px 4px 2px;white-space:nowrap">{rank_html(pos)}</td>'
             f'<td style="padding:9px 4px 2px" class="cl-nome">'
             f'{html.escape(str(r["full_name"]).title())}</td>'
             f'<td style="padding:9px 4px 2px;white-space:nowrap">'
@@ -145,7 +162,10 @@ st.caption(
     + ("" if cat == TUTTE_CAT else f", categoria {_etichetta(cat)}")
     + ". Un atleta compare una volta sola, col suo tempo migliore, e ci sono "
       "anche gli atleti non piu' attivi: un tempo fatto con la squadra resta "
-      "un tempo della squadra. La categoria accanto al nome e' quella della "
+      "un tempo della squadra. Chi ha lo stesso tempo al centesimo e' a pari "
+      "merito e occupa la stessa posizione, e in quel caso in elenco ci "
+      "finiscono tutti: una posizione non si spezza a meta' per far tornare i "
+      f"conti dei {TOP}. La categoria accanto al nome e' quella della "
       "stagione in cui ha nuotato quel tempo, e la manifestazione sotto al "
-      "nome porta ai risultati."
+      "nome porta ai risultati di quella gara."
 )
