@@ -144,6 +144,31 @@ quando qualcuno lascia la squadra.
 
 L'atleta cambia la sua password da **Profilo**, indicando quella attuale.
 
+### Vedere l'app con gli occhi di un atleta
+
+Sotto le azioni dell'anagrafica c'e' **Vedi l'app come …**, riservato
+all'amministratore: da li' in poi pagine, menu e query lavorano con
+l'identita' di quell'atleta, quindi si vede davvero quello che vede lui,
+comprese le sezioni riservate che spariscono. Serve a capire perche' uno
+"non trova" una gara o un'iscrizione, senza toccargli la password.
+
+**E' in sola lettura.** Durante l'emulazione si spengono il bottone
+Iscriviti in Agenda, la pagina Nuove iscrizioni, il cambio password e
+l'uscita: una riga scritta cosi' sarebbe indistinguibile da una scritta
+dall'atleta, perche' `creation_user_id` e' l'utente tecnico e non chi sta
+usando l'app. Una fascia in cima a ogni pagina dice chi si sta guardando e
+riporta indietro con un bottone.
+
+Nel codice: `auth.emula()`, `auth.smetti_emulazione()`,
+`auth.in_emulazione()` e `auth.sola_lettura()`, che e' quella che le pagine
+chiedono prima di disegnare un bottone che scrive. L'identita' finta vive in
+`st.session_state` sotto `auth.SESSION_AS`, non tocca il token "ricordami" e
+sparisce al logout. `auth.current_user()` restituisce l'emulato,
+`auth.utente_vero()` sempre quello collegato davvero: il permesso per
+avviare un'emulazione si controlla sul secondo, se no dall'emulazione non si
+potrebbe piu' cambiare atleta. Inizio e fine finiscono nel registro accessi
+come `EMULAZIONE` e `FINE EMULAZIONE`, con nota su chi guardava chi.
+
 ### Le tabelle
 
 ```sql
@@ -753,6 +778,34 @@ pagine chiudono con `st.stop()` quando non hanno niente da mostrare, e tutto
 quello che viene dopo non verrebbe mai disegnato. Essendo in
 `position: fixed`, dove sta nel DOM non cambia niente.
 
+Lo stesso trucco del `flex-wrap: nowrap` serve in **Agenda**, dove la
+scheda della manifestazione e il bottone Iscriviti devono restare affiancati
+anche sul telefono: le due colonne stanno dentro `st.container(key="riga_…")`
+e il CSS lascia alla scheda lo spazio che avanza mentre il bottone tiene i
+suoi 104px. Senza, sotto i 640px il bottone finisce sotto la scheda.
+
+---
+
+## Versione e novità
+
+Il numero di versione sta in **`version.py`** (`VERSIONE` e
+`DATA_RILASCIO`): e' codice, viaggia con il commit, quindi quello che si
+legge a video e' sempre quello che gira davvero. Le novita' stanno in
+**`CHANGELOG.md`** accanto, scritte a mano a ogni rilascio e in italiano
+corrente, perche' le leggono gli atleti e non gli sviluppatori. Tre numeri:
+il primo cambia quando cambia il modo di usare l'app, il secondo per una
+funzione nuova, il terzo per le correzioni.
+
+La pagina **Novita'** (`views/novita.py`, url `/novita`) e' aperta a tutti e
+mostra il changelog cosi' com'e'. Ci si arriva da un collegamento fisso in
+fondo al **Profilo**, sopra la riga con la versione in uso: niente avvisi a
+comparsa dopo un rilascio, chi vuole sapere cosa e' cambiato sa dove
+guardare. Il numero di versione in chiaro serve anche a noi, perche' quando
+un atleta segnala un problema si sa subito con che versione.
+
+`version.novita()` ritaglia dal changelog il blocco di una sola versione, se
+serve mostrare solo le ultime novita' invece di tutta la storia.
+
 Il filtro periodo sta dentro le pagine, tema e account nel Profilo. Il tema
 scelto sta in `ui_theme`, che non e' la chiave di nessun widget: Streamlit
 ripulisce lo stato dei widget che non ridisegna, quindi il radio del Profilo
@@ -806,6 +859,38 @@ Campi gestiti: ID (assegnato dal database, non modificabile), codice FIN,
 nome, cognome, sesso, data di nascita, e-mail, i due ruoli, la **scadenza
 del certificato medico** e lo stato **Attivo**.
 
+### La tabella si modifica direttamente
+
+L'elenco e' un `st.data_editor`: si scrive nelle celle e si preme **Salva le
+modifiche**. Tutto e' modificabile tranne ID e numero di gare; per
+aggiungere qualcuno resta ＋ Nuovo atleta, e il form Modifica resta per chi
+preferisce un atleta per volta. Il ruolo, che prima era una colonna sola
+calcolata, e' tornato alle sue due spunte, **Atleta** e **Staff**, perche'
+in griglia si devono poter cambiare separatamente.
+
+**O passa tutto o non passa niente.** `crud.salva_anagrafica` valida prima
+l'intero lotto e solo dopo comincia a scrivere: su 270 righe, salvarne meta'
+e fermarsi su un errore lascerebbe l'anagrafica in uno stato che nessuno sa
+piu' ricostruire. I controlli sono quelli del form (nome e cognome
+obbligatori, e-mail formalmente valida, data di nascita non nel futuro,
+almeno un ruolo, chi e' solo staff deve avere l'e-mail), piu' uno che il
+form non puo' avere: **il codice FIN duplicato dentro la griglia stessa**.
+`crud.valida` cerca i doppioni a database e non vede le altre righe in
+modifica, quindi due atleti a cui si da' lo stesso numero nello stesso
+salvataggio passerebbero il controllo. Gli errori escono con nome e cognome
+davanti, non con il numero di riga.
+
+Vengono riscritte solo le righe davvero cambiate, confrontate campo per
+campo con quelle a database: un salvataggio a vuoto non tocca niente e lo
+dice. Lo stato Attivo non passa da `aggiorna_atleta` ma dalle sue funzioni
+di soft delete, come nel form.
+
+Una cosa da sapere e' scritta anche sopra la tabella: **salvare prima di
+cambiare filtro o ordinamento**. `st.data_editor` tiene le celle toccate per
+posizione di riga, non per contenuto, quindi la chiave del widget porta
+dentro l'impronta degli id mostrati: cambiando le righe cambia la chiave e
+le modifiche in sospeso si perdono invece di finire sulla persona sbagliata.
+
 ### Atleta, allenatore o tutti e due
 
 Nel form ci sono due spunte che decidono cosa e' quella persona. **Atleta**
@@ -850,16 +935,20 @@ ancora. Nessun blocco automatico sulle iscrizioni: il certificato si
 registra e si guarda, non impedisce niente finche' non lo si chiede
 esplicitamente.
 
-**Il semaforo.** Nell'elenco la riga dell'atleta si colora di rosso se il
-certificato e' scaduto e di giallo se scade entro 60 giorni
-(`GIORNI_PREAVVISO`); sotto la tabella una riga dice quanti sono. Vale solo
-per chi e' in una categoria master, cioe' **M20/F20 e oltre**: sotto i venti
-anni la FIN non assegna categoria e il certificato lo segue la societa' con
-regole sue, quindi colorare quelle righe sarebbe un falso allarme. Chi non
-ha la data registrata resta bianco: non e' una scadenza vicina, e' un dato
-che manca, e si vede dalla cella vuota. Le tinte sono rgba esplicite e non
-`var(--…)`: lo Styler finisce nel grid di Streamlit, che le variabili CSS
-del tema non le risolve.
+**Il semaforo.** Nell'elenco la prima colonna porta un pallino: 🔴 se il
+certificato e' scaduto, 🟡 se scade entro 60 giorni (`GIORNI_PREAVVISO`),
+🟢 se e' in regola; accanto al bottone di salvataggio una riga dice quanti
+sono i primi due. Vale solo per chi e' in una categoria master, cioe'
+**M20/F20 e oltre**: sotto i venti anni la FIN non assegna categoria e il
+certificato lo segue la societa' con regole sue, quindi segnalare quelle
+righe sarebbe un falso allarme. Chi non ha la data registrata resta senza
+pallino: non e' una scadenza vicina, e' un dato che manca, e si vede dalla
+cella vuota.
+
+Era la riga intera colorata, con uno Styler. E' diventato un pallino quando
+la tabella e' passata a `st.data_editor`, che uno Styler non lo accetta: o
+si colora o si scrive, e poter correggere venti scadenze in griglia vale piu'
+del fondo colorato.
 
 Nel **Profilo** la stessa scala a tre colori sul riquadro del certificato:
 verde in corso di validita', giallo da 60 giorni alla scadenza (con i giorni

@@ -5,3 +5,8 @@ __pycache__/
 .env
 *.pem
 Claude outputs/
+import_risultati.py
+batch_punti.py
+import-risultati-howto.md
+regole-import-risultati-fase1.md
+fix-*.md
