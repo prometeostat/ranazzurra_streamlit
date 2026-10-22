@@ -1,12 +1,50 @@
+# Sul repository pubblico va SOLO quello che serve a far girare l'app su
+# Streamlit Cloud. Tutto il resto resta sul Drive e non esce di qui:
+# documenti di lavoro, appunti, script di import, bozze e credenziali.
+#
+# Per ottenerlo l'elenco e' rovesciato: si ignora tutto e poi si riammette
+# a uno a uno quello che serve. E' l'unico modo perche' la regola valga
+# anche per i file che non esistono ancora: con un elenco di esclusioni,
+# il prossimo appunto .md finirebbe su GitHub solo perche' nessuno si e'
+# ricordato di aggiungerlo.
+#
+# ATTENZIONE: un file nuovo che serve all'app non comparira' in
+# `git status` finche' non lo si aggiunge qui sotto. Vale soprattutto per
+# un nuovo modulo fuori da views/ e per i file dentro static/.
+
+*
+
+# ── Il codice dell'app ────────────────────────────────────────────
+!.gitignore
+!app.py
+!auth.py
+!crud.py
+!data.py
+!db.py
+!pwa.py
+!queries.py
+!season.py
+!theme.py
+!version.py
+!views/
+!views/*.py
+
+# ── Quello che l'app legge mentre gira ────────────────────────────
+# CHANGELOG.md non e' documentazione: lo legge `version.changelog()` e lo
+# mostra la pagina Novita'. Se non viene deployato, quella pagina sul sito
+# pubblico resta vuota.
+!CHANGELOG.md
+!static/
+!static/*
+!.streamlit/
+!.streamlit/config.toml
+
+# ── Come si installa ──────────────────────────────────────────────
+!requirements.txt
+
+# ── Mai, per nessun motivo ────────────────────────────────────────
+# Ultima parola: anche se qualcuno aggiungesse un'eccezione piu' su, qui
+# sotto le credenziali tornano fuori.
 .streamlit/secrets.toml
-.venv/
-__pycache__/
-*.pyc
-.env
 *.pem
-Claude outputs/
-import_risultati.py
-batch_punti.py
-import-risultati-howto.md
-regole-import-risultati-fase1.md
-fix-*.md
+.env
