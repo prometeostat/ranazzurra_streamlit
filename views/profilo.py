@@ -16,8 +16,9 @@ import data
 import season as season_mod
 import theme
 import version
-from views._common import (anagrafica, apri_atleta, page_header, preferiti,
-                           season_year, toggle_preferito)
+from views._common import (anagrafica, apri_atleta, page_header,
+                           preferiti_dettaglio, season_year,
+                           toggle_preferito)
 
 page_header("Profilo", "Account e impostazioni")
 
@@ -88,19 +89,23 @@ if mio is not None:
 
 # ── Preferiti ─────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Preferiti</div>', unsafe_allow_html=True)
-pref = preferiti()
-if not pref:
+# L'elenco arriva dalla query dei preferiti, con i nomi gia' dentro: non
+# si incrocia piu' con l'anagrafica della stagione scelta, se no un
+# preferito che quest'anno non ha gareggiato spariva dalla pagina e la sua
+# stella non si poteva nemmeno togliere.
+elenco = preferiti_dettaglio()
+if elenco.empty:
     st.caption("Nessun preferito. La stella si trova nel selettore atleta "
                "della Scheda atleta.")
 else:
-    tutti = anagrafica(sy)
-    elenco = tutti[tutti["athlete_id"].isin(pref)] if not tutti.empty else pd.DataFrame()
     for r in elenco.to_dict("records"):
         aid = int(r["athlete_id"])
+        sotto = ("non piu' in squadra" if r.get("inattivo")
+                 else "Ranazzurra Conegliano")
         c1, c2, c3 = st.columns([6, 2, 1], vertical_alignment="center")
         c1.markdown(f'<div class="ath-row"><div class="ath-name">'
                     f'{str(r["full_name"]).title()}</div>'
-                    f'<div class="ath-team">{r.get("team") or "—"}</div></div>',
+                    f'<div class="ath-team">{sotto}</div></div>',
                     unsafe_allow_html=True)
         if c2.button("Apri", key=f"pref_apri_{aid}", use_container_width=True):
             apri_atleta(aid)
@@ -108,6 +113,8 @@ else:
         if c3.button("★", key=f"pref_tog_{aid}", help="Togli dai preferiti"):
             toggle_preferito(aid)
             st.rerun()
+    st.caption("I preferiti restano salvati: li ritrovi anche dal telefono, "
+               "dopo un'uscita e al prossimo accesso.")
 
 # ── Impostazioni ──────────────────────────────────────────────────
 st.markdown('<div class="section-title">Impostazioni</div>', unsafe_allow_html=True)

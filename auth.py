@@ -30,11 +30,13 @@ import datetime as _dt
 import hashlib
 import hmac
 import os
+import re
 import secrets as _rnd
 import time
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from db import execute, query_df
 from queries import (ACCESS_LOG_INSERT_SQL, ATHLETE_BY_EMAIL_BIRTH_SQL,
@@ -49,7 +51,13 @@ SESSION_KEY = "auth_user"
 # token "ricordami" e sparisce ricaricando la pagina.
 SESSION_AS = "auth_come"
 TOKEN_PARAM = "t"
+# Durata di "Resta connesso". Si puo' cambiare da .streamlit/secrets.toml
+# con [app] token_giorni = 60, senza toccare il codice.
 TOKEN_TTL_DAYS = 30
+TOKEN_COOKIE = "rz_token"
+# Azione sul browser rimasta in sospeso dal giro precedente, vedi
+# _esegui_js_in_coda().
+JS_IN_CODA = "auth_js_in_coda"
 
 # Password: scrypt della libreria standard, niente dipendenze in piu'.
 # n=16384, r=8, p=1 sono i parametri consigliati per un login interattivo,
@@ -360,8 +368,19 @@ def _sign(payload: str) -> str:
     return hmac.new(_secret_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def _token_giorni() -> int:
+    """Quanto dura "Resta connesso". Da secrets, con un minimo e un massimo
+    perche' un valore assurdo in configurazione non diventi un problema di
+    sicurezza o un login a ogni apertura."""
+    try:
+        giorni = int(_app_cfg().get("token_giorni", TOKEN_TTL_DAYS))
+    except (TypeError, ValueError):
+        giorni = TOKEN_TTL_DAYS
+    return max(1, min(giorni, 365))
+
+
 def _make_token(athlete_id: int) -> str:
-    exp = int(time.time()) + TOKEN_TTL_DAYS * 86400
+    exp = int(time.time()) + _token_giorni() * 86400
     payload = f"{athlete_id}.{exp}"
     raw = f"{payload}.{_sign(payload)}"
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
@@ -378,6 +397,123 @@ def _read_token(token: str) -> int | None:
             return None
         return int(athlete_id)
     except Exception:
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════
+# "Resta connesso": il token viaggia in un cookie
+# ══════════════════════════════════════════════════════════════════
+# Il token e' sempre durato trenta giorni, ma veniva tenuto nell'indirizzo,
+# e dall'indirizzo si perde in fretta: chi apre l'app dall'icona sulla home
+# parte da `start_url` del manifest, che e' pulito, e si ritrovava la
+# schermata di accesso ogni volta. Lo stesso succede quando Community Cloud
+# mette in pausa l'app, o quando si riavvia il server: la sessione e' nuova
+# e in `st.session_state` non e' rimasto niente.
+#
+# Adesso il token sta in un **cookie**, che il browser rimanda da solo a
+# ogni connessione, e Python lo rilegge con `st.context.cookies`, che
+# contiene i cookie della richiesta con cui la sessione e' nata. Niente
+# ricaricamenti e niente token in vista nell'indirizzo.
+#
+# Perche' non `localStorage`: da Python si legge solo quello che arriva in
+# una richiesta, quindi il token andava riportato indietro ricaricando la
+# pagina con `?t=...`. Ma **il sandbox dell'iframe dei componenti non lo
+# permette**. In Streamlit 1.42 e':
+#
+#     allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox
+#     allow-same-origin allow-scripts allow-downloads
+#
+# C'e' `allow-same-origin`, e per questo pwa.py arriva a
+# `window.top.document` e qui si arriva a `document.cookie`. Non c'e'
+# `allow-top-navigation`, quindi un `location.replace()` sul documento che
+# sta sopra il componente il browser lo rifiuta: il token veniva scritto e
+# la pagina non si ricaricava mai. Il cookie gira intorno al problema,
+# perche' non serve navigare: ci pensa il browser a mandarlo.
+#
+# Il cookie non puo' essere HttpOnly, perche' lo scrive JavaScript. Vive
+# sulla stessa origine dell'app e vale quanto il token che contiene, che e'
+# firmato e scade da solo; `Secure` si aggiunge quando il sito e' in https,
+# cosi' in locale su http funziona lo stesso.
+
+_JS_COOKIE = """
+<script>
+(function () {
+  try {
+    // Il documento in cima, come in pwa.py: su Community Cloud l'app sta
+    // dentro un iframe e il cookie va messo sull'origine del sito.
+    var doc = null;
+    try { if (window.top && window.top.document) doc = window.top.document; } catch (e) {}
+    if (!doc) { try { doc = window.parent.document; } catch (e) {} }
+    if (!doc) doc = document;
+    var sicuro = '';
+    try {
+      if ((window.top || window).location.protocol === 'https:') {
+        sicuro = '; Secure';
+      }
+    } catch (e) {}
+    doc.cookie = '__CHIAVE__=__VALORE__; Max-Age=__DURATA__; Path=/; SameSite=Lax' + sicuro;
+  } catch (e) {
+    // cookie bloccati o DOM non raggiungibile: l'app funziona lo stesso,
+    // si rifara' il login la prossima volta
+  }
+})();
+</script>
+"""
+
+
+def _ricorda(token: str) -> None:
+    """Mette il token nel cookie, dove sopravvive alla sessione."""
+    # Il token finisce dentro una stringa JavaScript: si accetta solo
+    # l'alfabeto base64url, che e' quello che `_make_token` produce. Se un
+    # domani il formato cambiasse e ci entrasse un apice, qui si fermerebbe
+    # invece di uscire dalla stringa.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token or ""):
+        return
+    st.session_state[JS_IN_CODA] = ("ricorda", token)
+
+
+def _dimentica() -> None:
+    """Toglie il cookie. Lo chiamano l'uscita e il token non valido."""
+    st.session_state[JS_IN_CODA] = ("dimentica", "")
+
+
+def _esegui_js_in_coda() -> bool:
+    """
+    Scrive o cancella il cookie rimasto in sospeso dal giro prima, e dice
+    se ha fatto qualcosa.
+
+    Scrivere il cookie vuol dire disegnare un componente, e un componente
+    disegnato subito prima di `st.rerun()` non arriva mai a destinazione: il
+    rerun butta via il frame a meta'. Succede sia all'uscita sia all'entrata,
+    che finiscono tutte e due con un rerun. Quindi l'azione si mette da parte
+    e si esegue all'inizio del giro dopo, che e' un giro che vive.
+    """
+    azione = st.session_state.pop(JS_IN_CODA, None)
+    if not azione:
+        return False
+    tipo, token = azione
+    valore = token if tipo == "ricorda" else ""
+    durata = _token_giorni() * 86400 if tipo == "ricorda" else 0
+    components.html(
+        _JS_COOKIE.replace("__CHIAVE__", TOKEN_COOKIE)
+                  .replace("__VALORE__", valore)
+                  .replace("__DURATA__", str(durata)),
+        height=0, width=0)
+    return True
+
+
+def _token_dal_cookie() -> str | None:
+    """
+    Il token che il browser ha rimandato con la richiesta di questa
+    sessione. `st.context.cookies` contiene i cookie della richiesta con cui
+    la sessione e' nata, che e' esattamente quello che serve: un cookie
+    scritto adesso si vedra' alla connessione dopo.
+    """
+    try:
+        return st.context.cookies.get(TOKEN_COOKIE) or None
+    except Exception:
+        # st.context non c'e' (versione diversa) o la sessione non ha una
+        # richiesta dietro: si tira avanti senza
         return None
 
 
@@ -427,7 +563,10 @@ def _login_user(rec: dict, email: str | None = None, remember: bool = False,
     }
     st.session_state[SESSION_KEY] = user
     if remember:
-        st.query_params[TOKEN_PARAM] = _make_token(user["athlete_id"])
+        # Il token va nel browser, non nell'indirizzo: dall'indirizzo si
+        # perde al primo cambio pagina e non c'e' affatto quando l'app si
+        # apre dall'icona sulla home.
+        _ricorda(_make_token(user["athlete_id"]))
     registra_accesso("ACCESSO", id=user["athlete_id"], nome=user["full_name"],
                      fin=user["fin_code"], ruolo=user["role"], via=via)
 
@@ -582,6 +721,9 @@ def logout() -> None:
     st.session_state.pop(SESSION_KEY, None)
     if TOKEN_PARAM in st.query_params:
         del st.query_params[TOKEN_PARAM]
+    # Via anche dal browser, se no al prossimo giro il JavaScript rientra
+    # con il token di chi e' appena uscito.
+    _dimentica()
     if _mode() == "oidc" and hasattr(st, "logout"):
         st.logout()
     st.rerun()
@@ -592,6 +734,11 @@ def require_login() -> dict:
     Gate d'ingresso. Se l'utente non e' autenticato disegna la pagina di
     login e ferma l'esecuzione. Restituisce l'utente corrente.
     """
+    # Prima di tutto il resto: quello che era rimasto da scrivere nel
+    # browser al giro prima. Vale anche per chi e' gia' dentro, perche' il
+    # "ricordami" viene messo in coda proprio dal login.
+    js_fatto = _esegui_js_in_coda()
+
     mode = _mode()
 
     if mode == "open":
@@ -607,15 +754,36 @@ def require_login() -> dict:
             st.stop()
         return current_user()
 
-    # Sessione ripristinata dal token in query string
-    token = st.query_params.get(TOKEN_PARAM)
+    # Sessione ripristinata dal "resta connesso". Il token arriva dal
+    # cookie, che il browser rimanda da solo; l'indirizzo resta come
+    # ripiego, perche' un vecchio collegamento salvato con `?t=` dentro
+    # deve continuare a funzionare.
+    #
+    # Dopo un'uscita il cookie si salta: la cancellazione e' appena stata
+    # messa in coda ed eseguita in questo stesso giro, ma `st.context` legge
+    # la richiesta con cui la sessione e' nata, dove il cookie c'era ancora,
+    # e senza questo controllo si rientrerebbe subito dopo essere usciti.
+    dal_cookie = None if js_fatto else _token_dal_cookie()
+    token = dal_cookie or st.query_params.get(TOKEN_PARAM)
     if token:
         aid = _read_token(token)
         if aid:
             rec = _athlete_by_id(aid)
             if rec:
-                _login_user(rec, via="token")
+                # remember=True rinnova il cookie a ogni rientro: chi usa
+                # l'app di tanto in tanto non arriva mai alla scadenza.
+                _login_user(rec, via="token", remember=True)
+                # Se il token era nell'indirizzo, l'indirizzo torna pulito:
+                # da qui in avanti ci pensa il cookie.
+                try:
+                    del st.query_params[TOKEN_PARAM]
+                except KeyError:
+                    pass
                 return current_user()
+        # Token presente ma non valido (scaduto, o firmato con un'altra
+        # chiave): si butta via il cookie, se no il browser lo rimanderebbe
+        # a ogni connessione.
+        _dimentica()
 
     if mode == "oidc":
         _oidc_gate()

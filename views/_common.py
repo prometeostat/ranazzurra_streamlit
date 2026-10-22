@@ -273,11 +273,60 @@ def apri_atleta(athlete_id: int) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════
-# Preferiti (per ora vivono nella sessione, vedi README)
+# Preferiti
 # ══════════════════════════════════════════════════════════════════
+# Le stelle stanno a database, su `athlete_favorites`, legate a chi le ha
+# messe: sopravvivono al refresh, al logout e al cambio di dispositivo.
+# Prima vivevano in `st.session_state` e duravano quanto la sessione, che su
+# Community Cloud finisce da sola appena l'app va in pausa.
+#
+# Chi usa l'app senza essere collegato a una scheda atleta (l'ospite della
+# modalita' "open", o un account che l'anagrafica non ha agganciato) non ha
+# una riga a cui legarle: per lui restano in sessione come prima. E' l'unico
+# caso rimasto, e la pagina Profilo lo dice.
+
+
+def _chi_guarda() -> int | None:
+    """L'atleta a cui appartengono le stelle, o None se non ce n'e' uno."""
+    aid = (auth.current_user() or {}).get("athlete_id")
+    return None if aid is None else int(aid)
+
 
 def preferiti() -> list[int]:
-    return [int(x) for x in st.session_state.get("preferiti", [])]
+    """Gli id degli atleti preferiti, in ordine alfabetico."""
+    chi = _chi_guarda()
+    if chi is None:
+        return [int(x) for x in st.session_state.get("preferiti", [])]
+    # import locale: crud importa db, e tenerlo in cima a questo modulo
+    # allungherebbe l'avvio di ogni pagina anche dove le stelle non servono
+    import crud
+    df = crud.preferiti_di(chi)
+    return [] if df.empty else [int(x) for x in df["athlete_id"].dropna()]
+
+
+def preferiti_dettaglio() -> pd.DataFrame:
+    """
+    I preferiti con il nome gia' dentro, per la pagina Profilo.
+
+    Li porta su la query, non l'anagrafica della stagione scelta: un
+    preferito che quest'anno non ha ancora gareggiato, o che ha smesso,
+    deve comparire lo stesso. Prima l'elenco si incrociava con l'anagrafica
+    del periodo e quelli fuori sparivano dalla pagina, stella compresa, e
+    non c'era piu' modo di toglierla.
+    """
+    vuoto = pd.DataFrame(columns=["athlete_id", "full_name", "inattivo"])
+    chi = _chi_guarda()
+    if chi is not None:
+        import crud
+        return crud.preferiti_di(chi)
+
+    ids = preferiti()
+    tutti = anagrafica()
+    if not ids or tutti.empty:
+        return vuoto
+    fuori = tutti[tutti["athlete_id"].isin(ids)][["athlete_id", "full_name"]].copy()
+    fuori["inattivo"] = False
+    return fuori
 
 
 def e_preferito(athlete_id: int) -> bool:
@@ -285,10 +334,35 @@ def e_preferito(athlete_id: int) -> bool:
 
 
 def toggle_preferito(athlete_id: int) -> None:
-    pref = preferiti()
+    """
+    Accende o spegne la stella, scrivendo subito a database.
+
+    Durante un'emulazione non si scrive: la riga finirebbe addosso
+    all'atleta emulato e sarebbe indistinguibile da una sua.
+    """
     aid = int(athlete_id)
-    st.session_state["preferiti"] = [x for x in pref if x != aid] if aid in pref \
-        else pref + [aid]
+    chi = _chi_guarda()
+
+    if chi is None:
+        pref = preferiti()
+        st.session_state["preferiti"] = ([x for x in pref if x != aid]
+                                         if aid in pref else pref + [aid])
+        return
+
+    if auth.sola_lettura():
+        st.toast("Stai guardando come un altro atleta: i preferiti non si "
+                 "toccano.", icon="👁")
+        return
+
+    import crud
+    fatto = (crud.togli_preferito(chi, aid) if aid in preferiti()
+             else crud.aggiungi_preferito(chi, aid))
+    if not fatto:
+        # Manca la tabella `athlete_favorites`: il codice e' arrivato prima
+        # della migrazione. Meglio dirlo che lasciare la stella che non
+        # reagisce senza spiegare perche'.
+        st.toast("I preferiti non sono ancora attivi su questo database.",
+                 icon="⚠️")
 
 
 # ══════════════════════════════════════════════════════════════════

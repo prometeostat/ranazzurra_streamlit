@@ -1489,3 +1489,60 @@ ORDER BY """ + ORDINE_PROGRAMMA + """, re.is_relay, s.name, dist_num,
          EXTRACT(EPOCH FROM ar.final_time) NULLS LAST,
          btrim(a.last_name), btrim(a.first_name)
 """
+
+
+# ══════════════════════════════════════════════════════════════════
+# Preferiti
+# ══════════════════════════════════════════════════════════════════
+# La stella accanto a un atleta. Prima viveva solo in `st.session_state`,
+# quindi spariva a ogni nuova sessione: su Community Cloud basta che l'app
+# vada in pausa. Adesso sta a database, legata a chi l'ha messa.
+#
+#   CREATE TABLE athlete_favorites (
+#       athlete_id             integer NOT NULL REFERENCES athletes(id),
+#       favorite_athlete_id    integer NOT NULL REFERENCES athletes(id),
+#       creation_utc_date_time timestamp NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+#       creation_user_id       integer NOT NULL,
+#       PRIMARY KEY (athlete_id, favorite_athlete_id)
+#   );
+#
+# `athlete_id` e' chi mette la stella, `favorite_athlete_id` chi la riceve.
+# La chiave primaria sulla coppia fa due mestieri: impedisce il doppione e
+# serve da indice per la lettura, che parte sempre da chi guarda.
+#
+# Niente `is_deleted`, a differenza del resto dello schema: una stella tolta
+# non ha nessun valore storico e tenerne traccia vorrebbe solo dire righe
+# morte da saltare a ogni lettura. Si cancella davvero, come il registro
+# accessi che si svuota.
+
+# I preferiti di un atleta, con il nome di chi e' stato scelto: l'elenco
+# serve sempre insieme ai nomi, e una JOIN qui evita di incrociarli in
+# pagina. Chi e' stato disattivato in anagrafica resta, con il suo flag:
+# un preferito non sparisce perche' ha smesso di gareggiare.
+# %s: athlete_id di chi guarda
+FAVORITES_SQL = """
+SELECT
+    f.favorite_athlete_id                            AS athlete_id,
+    btrim(a.last_name) || ' ' || btrim(a.first_name) AS full_name,
+    a.is_deleted                                     AS inattivo,
+    f.creation_utc_date_time                         AS da_quando
+FROM athlete_favorites f
+JOIN athletes a ON a.id = f.favorite_athlete_id
+WHERE f.athlete_id = %s
+ORDER BY btrim(a.last_name), btrim(a.first_name)
+"""
+
+# Mette la stella. L'ON CONFLICT rende l'operazione ripetibile: due click
+# ravvicinati, o due schede aperte, non devono dare un errore di chiave.
+# %s: athlete_id di chi guarda, athlete_id preferito, user_id tecnico
+FAVORITE_INSERT_SQL = """
+INSERT INTO athlete_favorites (athlete_id, favorite_athlete_id, creation_user_id)
+VALUES (%s, %s, %s)
+ON CONFLICT (athlete_id, favorite_athlete_id) DO NOTHING
+"""
+
+# Toglie la stella. %s: athlete_id di chi guarda, athlete_id preferito
+FAVORITE_DELETE_SQL = """
+DELETE FROM athlete_favorites
+WHERE athlete_id = %s AND favorite_athlete_id = %s
+"""

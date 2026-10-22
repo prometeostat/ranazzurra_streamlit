@@ -35,7 +35,9 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      GESTIONE_CONTEGGI_SQL, MY_SIGNUPS_SQL,
                      SIGNUP_INSERT_SQL, SIGNUP_MEETS_SQL,
                      SIGNUP_RACES_SQL,
-                     SIGNUP_UPDATE_SQL, SIGNUP_WINDOW_SQL, TIMINGS_SQL)
+                     SIGNUP_UPDATE_SQL, SIGNUP_WINDOW_SQL, TIMINGS_SQL,
+                     FAVORITES_SQL, FAVORITE_DELETE_SQL,
+                     FAVORITE_INSERT_SQL)
 
 MAX_NOME = 50        # varchar(50) su first_name, last_name ed email
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
@@ -1227,3 +1229,149 @@ def svuota_registro() -> int:
     disattiva, e tenere righe morte in giro non aiuterebbe nessuno.
     """
     return int(execute(ACCESS_LOG_DELETE_SQL) or 0)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Preferiti
+# ══════════════════════════════════════════════════════════════════
+# La stella accanto a un atleta, legata a chi l'ha messa. Prima stava solo
+# in `st.session_state` e quindi durava quanto la sessione: su Community
+# Cloud l'app va in pausa da sola e al risveglio i preferiti erano spariti.
+# Adesso la riga sta su `athlete_favorites` e segue l'atleta su qualunque
+# dispositivo.
+
+PREFERITI_VUOTI = ["athlete_id", "full_name", "inattivo", "da_quando"]
+
+
+def _tabella_assente(err: Exception) -> bool:
+    """
+    True se l'errore e' "questa tabella non esiste" (SQLSTATE 42P01).
+
+    Serve a non far cadere mezza app quando il codice arriva a destinazione
+    prima della sua tabella: il deploy su Community Cloud parte da un push,
+    la migrazione la si lancia a mano, e fra i due c'e' una finestra. In
+    quella finestra i preferiti devono spegnersi, non buttare giu' il
+    Profilo e la Scheda atleta, che la stella la disegnano tutte e due.
+    """
+    return (getattr(err, "sqlstate", None) == "42P01"
+            or type(err).__name__ == "UndefinedTable")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def preferiti_di(athlete_id: int) -> pd.DataFrame:
+    """
+    I preferiti di un atleta, in ordine alfabetico e gia' con i nomi.
+
+    Cachata perche' la stella si disegna in piu' punti della stessa pagina
+    (il selettore, l'elenco, la testata della scheda) e sarebbe una lettura
+    per ognuno. Ogni scrittura svuota il cache, quindi la stella cambia
+    colore subito.
+
+    Senza la tabella torna vuota: l'app resta in piedi e la stella non fa
+    niente. Qualunque altro errore passa, perche' nasconderlo vorrebbe dire
+    mostrare "nessun preferito" a chi invece ne ha.
+    """
+    try:
+        df = query_df(FAVORITES_SQL, (int(athlete_id),))
+    except Exception as err:
+        if _tabella_assente(err):
+            return pd.DataFrame(columns=PREFERITI_VUOTI)
+        raise
+    if not df.empty:
+        df["athlete_id"] = pd.to_numeric(df["athlete_id"], errors="coerce")
+    return df
+
+
+def aggiungi_preferito(athlete_id: int, preferito_id: int) -> bool:
+    """Mette la stella. Ripetere l'operazione non e' un errore.
+
+    Torna False se la tabella non c'e' ancora, cosi' la pagina puo' dirlo
+    invece di far finta che sia andata."""
+    try:
+        execute(FAVORITE_INSERT_SQL, (int(athlete_id), int(preferito_id),
+                                      _user_id()))
+    except Exception as err:
+        if _tabella_assente(err):
+            return False
+        raise
+    preferiti_di.clear()
+    return True
+
+
+def togli_preferito(athlete_id: int, preferito_id: int) -> bool:
+    """Toglie la stella. Se non c'era, non succede niente."""
+    try:
+        execute(FAVORITE_DELETE_SQL, (int(athlete_id), int(preferito_id)))
+    except Exception as err:
+        if _tabella_assente(err):
+            return False
+        raise
+    preferiti_di.clear()
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════
+# Il sollecito della pre-iscrizione
+# ══════════════════════════════════════════════════════════════════
+# Due date diverse, e non è una svista.
+#
+# Il **limite tecnico** è il giorno prima della chiusura ufficiale: oltre
+# quello `salva_iscrizioni` non scrive più, ed è la regola di
+# `queries.FINESTRA_APERTA`.
+#
+# Il **sollecito** è il giorno prima dell'apertura ufficiale, ed è una
+# scadenza della squadra, non del portale: il giorno in cui si apre il
+# portale federale gli allenatori devono già avere le adesioni in mano per
+# portarcele. Chi si pre-iscrive dopo può ancora farlo dall'app, ma rischia
+# di arrivare quando l'iscrizione vera è già stata mandata.
+#
+# Il sollecito avvisa e basta: non blocca niente e non entra in nessun
+# controllo di scrittura.
+
+GIORNI_SOLLECITO_ROSSO = 3   # da qui in giù la fascia diventa rossa
+
+
+def prossimo_sollecito(athlete_id: int | None,
+                       oggi: _dt.date | None = None) -> dict | None:
+    """
+    La pre-iscrizione più urgente da fare, o None se non ce n'è nessuna.
+
+    Si prende la manifestazione più vicina fra quelle su cui oggi si può
+    ancora scrivere: l'elenco arriva già filtrato e ordinato per data da
+    `manifestazioni_iscrivibili()`, quindi è la prima.
+
+    Torna anche quante gare l'atleta ha già scelto lì dentro, perché a chi
+    si è già pre-iscritto non si fa la predica: gli si dice solo fino a
+    quando può cambiare idea.
+    """
+    aperte = manifestazioni_iscrivibili()
+    if aperte.empty:
+        return None
+
+    r = aperte.iloc[0].to_dict()
+    apertura = _data_pura(r.get("apertura"))
+    if apertura is None:
+        return None
+
+    oggi = oggi or _dt.date.today()
+    sollecito = apertura - _dt.timedelta(days=GIORNI_CODA)
+    ultimo = _data_pura(r.get("ultimo_giorno")) or ultimo_giorno_utile(
+        r.get("chiusura"))
+
+    mie = 0
+    if athlete_id is not None:
+        righe = mie_iscrizioni(int(athlete_id))
+        if not righe.empty:
+            mie = int((righe["comp_id"] == int(r["comp_id"])).sum())
+
+    return {
+        "comp_id": int(r["comp_id"]),
+        "nome": str(r.get("nome") or "Manifestazione"),
+        "start_date": _data_pura(r.get("start_date")),
+        "apertura": apertura,
+        "sollecito": sollecito,
+        "ultimo_giorno": ultimo,
+        "giorni": (sollecito - oggi).days,
+        "scaduto": oggi > sollecito,
+        "mie_gare": mie,
+    }

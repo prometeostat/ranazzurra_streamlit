@@ -37,6 +37,8 @@ def _init_state() -> None:
     st.session_state.setdefault("ui_theme", "dark")
     st.session_state.setdefault("pool_filter", "Tutte")
     st.session_state.setdefault("athlete_id", user.get("athlete_id"))
+    # Ripiego per chi non e' collegato a una scheda atleta: le stelle di
+    # tutti gli altri stanno a database, vedi views/_common.preferiti().
     st.session_state.setdefault("preferiti", [])
     st.session_state.setdefault("scheda_aperta", False)
     # Periodo predefinito: tutte le stagioni, cosi' si parte dallo storico

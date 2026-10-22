@@ -30,6 +30,85 @@ OGGI = _dt.date.today()
 ORIZZONTE = 75
 
 page_header("Agenda", "Calendario manifestazioni")
+
+
+def fascia_pre_iscrizione() -> None:
+    """
+    La scadenza della prossima pre-iscrizione, in cima a tutto.
+
+    Non e' il limite tecnico delle iscrizioni, che e' il giorno prima della
+    chiusura ufficiale: e' il giorno prima dell'**apertura**, quando gli
+    allenatori devono avere le adesioni in mano per portarle sul portale
+    federale. Chi arriva dopo puo' ancora pre-iscriversi dall'app, ma
+    rischia che l'iscrizione vera sia gia' partita, ed e' per questo che la
+    fascia dice tutte e due le date invece di una sola.
+
+    Sta prima dei filtri e prima di qualunque `st.stop()` della pagina:
+    deve vedersi sempre, anche quando il periodo scelto non ha niente
+    dentro.
+    """
+    io = auth.current_user() or {}
+    if io.get("athlete_id") is None:
+        return
+    s = crud.prossimo_sollecito(int(io["athlete_id"]))
+    if not s:
+        return
+
+    quando = (s["sollecito"].strftime("%d/%m/%Y") if s["sollecito"] else "—")
+    ultimo = (s["ultimo_giorno"].strftime("%d/%m/%Y")
+              if s["ultimo_giorno"] else None)
+    gara = (f'{s["nome"]}, {s["start_date"].strftime("%d/%m")}'
+            if s["start_date"] else s["nome"])
+
+    if s["mie_gare"]:
+        # Etichetta corta: con una lunga la data va a capo e la fascia
+        # perde il colpo d'occhio.
+        stile, etichetta = "fatta", "Puoi cambiare fino al"
+        coda = (f'{s["mie_gare"]} gar{"a" if s["mie_gare"] == 1 else "e"} '
+                "gia' scelte" if s["mie_gare"] != 1 else "1 gara gia' scelta")
+        quando = ultimo or quando
+        sotto = (f'{gara}. Hai gia\' dato le tue gare: fino al {ultimo} puoi '
+                 'aggiungerne, toglierne o cambiare i tempi da Modifica.'
+                 if ultimo else gara)
+    else:
+        giorni = s["giorni"]
+        urgente = s["scaduto"] or giorni <= crud.GIORNI_SOLLECITO_ROSSO
+        stile = "urgente" if urgente else ""
+        etichetta = "Pre-iscrizione entro il"
+        if s["scaduto"]:
+            coda = "scaduta"
+        elif giorni == 0:
+            coda = "oggi e' l'ultimo giorno"
+        elif giorni == 1:
+            coda = "manca 1 giorno"
+        else:
+            coda = f"mancano {giorni} giorni"
+        if s["scaduto"]:
+            sotto = (f'{gara}. Il termine per la squadra e\' passato: il '
+                     f'modulo resta aperto fino al {ultimo}, ma l\'iscrizione '
+                     'vera potrebbe essere gia\' partita. Avvisa i coach.'
+                     if ultimo else f'{gara}. Il termine e\' passato: avvisa i coach.')
+        else:
+            sotto = (f'{gara}. Il {s["apertura"].strftime("%d/%m")} la squadra '
+                     'porta le adesioni sul portale federale, quindi servono '
+                     f'prima. Dopo puoi ancora cambiare qui fino al {ultimo}.'
+                     if ultimo else gara)
+
+    st.html(
+        f'<div class="isc-scadenza {stile}">'
+        f'<span class="isc-scadenza-lbl">{html.escape(etichetta)}</span>'
+        f'<span class="isc-scadenza-data">{quando}</span>'
+        f'<span class="isc-scadenza-coda">{html.escape(coda)}</span></div>')
+    st.caption(sotto)
+
+    if not auth.sola_lettura():
+        if st.button("📝  Vai alla pre-iscrizione", type="primary",
+                     use_container_width=True, key="sollecito_vai"):
+            st.session_state["isc_comp"] = s["comp_id"]
+            st.switch_page("views/iscrizioni_nuove.py")
+
+
+fascia_pre_iscrizione()
 inline_filters("agenda", pool=False)
 
 sy = season_year()

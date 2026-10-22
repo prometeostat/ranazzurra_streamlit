@@ -4,6 +4,41 @@ Le versioni hanno tre numeri: il primo cambia quando cambia il modo di usare
 l'app, il secondo quando arriva una funzione nuova, il terzo per le
 correzioni. La versione che stai usando è scritta in fondo al Profilo.
 
+## 1.1.0 — 22/10/2026
+
+### I preferiti restano
+
+Le stelle che metti agli atleti adesso sono salvate sul serio. Prima
+duravano quanto la sessione, e la sessione finisce da sola appena l'app
+resta ferma un po': le ritrovavi sparite senza aver fatto niente. Adesso le
+ritrovi anche dal telefono, dopo essere uscito e al prossimo accesso.
+L'elenco nel Profilo mostra anche chi quest'anno non ha ancora gareggiato,
+che prima spariva dalla pagina portandosi via pure il modo di togliergli la
+stella.
+
+### Resta connesso funziona davvero
+
+La spunta "resta connesso" c'era già ma non teneva: chi apriva l'app
+dall'icona sulla home si ritrovava la schermata di accesso ogni volta, e
+bastava che l'app restasse ferma qualche minuto per dover rientrare.
+Adesso tiene per trenta giorni e si rinnova ogni volta che apri, quindi se
+la usi anche solo ogni tanto non ti chiede più niente. Uscendo con il
+bottone Esci, invece, esce davvero.
+
+### La scadenza delle pre-iscrizioni, in cima all'Agenda
+
+In alto nell'**Agenda** c'è una fascia con la data entro cui dare le tue
+gare per la prossima manifestazione. È gialla finché c'è tempo, diventa
+rossa negli ultimi giorni, e se ti sei già pre-iscritto diventa azzurra e
+ti dice solo fino a quando puoi cambiare idea.
+
+Attenzione a quale data è: **è il giorno prima dell'apertura ufficiale
+delle iscrizioni**, non la chiusura. Quel giorno gli allenatori devono
+avere le adesioni in mano per portarle sul portale federale. Dopo puoi
+ancora cambiare qualcosa dall'app, ma l'iscrizione vera potrebbe essere
+già partita: in quel caso avvisa i coach. Per il Trofeo di Belluno del
+21 novembre la data è il 30 ottobre.
+
 ## 1.0.0 — 14/10/2026
 
 ### Ti iscrivi alle gare da qui

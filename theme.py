@@ -578,6 +578,27 @@ div[class*="st-key-riga_"] div[data-testid="stColumn"]:last-child {
 .isc-scadenza-coda { font-family:'Barlow Condensed',sans-serif; font-size:13px;
                      color:var(--white); }
 
+/* Stessa fascia, ma rossa: la pre-iscrizione scade fra pochi giorni o e'
+   gia' scaduta. Il rosso sta solo qui, sulla data che fa perdere la gara,
+   se no smette di voler dire qualcosa. */
+.isc-scadenza.urgente {
+    background:linear-gradient(90deg, rgba(255,77,109,0.22),
+               rgba(255,77,109,0.06));
+    border-color:var(--red); border-left-color:var(--red);
+}
+.isc-scadenza.urgente .isc-scadenza-lbl,
+.isc-scadenza.urgente .isc-scadenza-data { color:var(--red); }
+
+/* Variante calma: la pre-iscrizione e' gia' fatta, resta solo da sapere
+   fino a quando si puo' cambiare. */
+.isc-scadenza.fatta {
+    background:linear-gradient(90deg, rgba(0,194,199,0.18),
+               rgba(0,194,199,0.05));
+    border-color:var(--teal); border-left-color:var(--teal);
+}
+.isc-scadenza.fatta .isc-scadenza-lbl,
+.isc-scadenza.fatta .isc-scadenza-data { color:var(--teal); }
+
 .isc-gara { font-family:'Barlow Condensed',sans-serif; font-size:16px;
             font-weight:600; color:var(--white); line-height:1.15; }
 .isc-sotto { font-family:'Barlow Condensed',sans-serif; font-size:12px;
