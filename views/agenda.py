@@ -57,8 +57,10 @@ def fascia_pre_iscrizione() -> None:
     quando = (s["sollecito"].strftime("%d/%m/%Y") if s["sollecito"] else "—")
     ultimo = (s["ultimo_giorno"].strftime("%d/%m/%Y")
               if s["ultimo_giorno"] else None)
-    gara = (f'{s["nome"]}, {s["start_date"].strftime("%d/%m")}'
-            if s["start_date"] else s["nome"])
+    # Il nome della manifestazione sta nella fascia, grande: la data da sola
+    # non dice entro il 30/10 per che cosa.
+    giorno_gara = (f' · {s["start_date"].strftime("%d/%m/%Y")}'
+                   if s["start_date"] else "")
 
     if s["mie_gare"]:
         # Etichetta corta: con una lunga la data va a capo e la fascia
@@ -67,9 +69,9 @@ def fascia_pre_iscrizione() -> None:
         coda = (f'{s["mie_gare"]} gar{"a" if s["mie_gare"] == 1 else "e"} '
                 "gia' scelte" if s["mie_gare"] != 1 else "1 gara gia' scelta")
         quando = ultimo or quando
-        sotto = (f'{gara}. Hai gia\' dato le tue gare: fino al {ultimo} puoi '
+        sotto = (f'Hai gia\' dato le tue gare: fino al {ultimo} puoi '
                  'aggiungerne, toglierne o cambiare i tempi da Modifica.'
-                 if ultimo else gara)
+                 if ultimo else "Hai gia' dato le tue gare.")
     else:
         giorni = s["giorni"]
         urgente = s["scaduto"] or giorni <= crud.GIORNI_SOLLECITO_ROSSO
@@ -84,22 +86,24 @@ def fascia_pre_iscrizione() -> None:
         else:
             coda = f"mancano {giorni} giorni"
         if s["scaduto"]:
-            sotto = (f'{gara}. Il termine per la squadra e\' passato: il '
-                     f'modulo resta aperto fino al {ultimo}, ma l\'iscrizione '
-                     'vera potrebbe essere gia\' partita. Avvisa i coach.'
-                     if ultimo else f'{gara}. Il termine e\' passato: avvisa i coach.')
+            sotto = (f'Il termine per la squadra e\' passato: il modulo resta '
+                     f'aperto fino al {ultimo}, ma l\'iscrizione vera '
+                     'potrebbe essere gia\' partita. Avvisa i coach.'
+                     if ultimo else "Il termine e' passato: avvisa i coach.")
         else:
-            sotto = (f'{gara}. Il {s["apertura"].strftime("%d/%m")} la squadra '
-                     'porta le adesioni sul portale federale, quindi servono '
-                     f'prima. Dopo puoi ancora cambiare qui fino al {ultimo}.'
-                     if ultimo else gara)
+            sotto = (f'Dopo puoi ancora cambiare qui fino al {ultimo}.'
+                     if ultimo else "")
 
     st.html(
         f'<div class="isc-scadenza {stile}">'
+        f'<span class="isc-scadenza-gara">{html.escape(str(s["nome"]))}'
+        f'<span class="isc-scadenza-quando">{html.escape(giorno_gara)}</span>'
+        f'</span>'
         f'<span class="isc-scadenza-lbl">{html.escape(etichetta)}</span>'
         f'<span class="isc-scadenza-data">{quando}</span>'
         f'<span class="isc-scadenza-coda">{html.escape(coda)}</span></div>')
-    st.caption(sotto)
+    if sotto:
+        st.caption(sotto)
 
     if not auth.sola_lettura():
         if st.button("📝  Vai alla pre-iscrizione", type="primary",

@@ -578,6 +578,19 @@ div[class*="st-key-riga_"] div[data-testid="stColumn"]:last-child {
 .isc-scadenza-coda { font-family:'Barlow Condensed',sans-serif; font-size:13px;
                      color:var(--white); }
 
+/* Il nome della manifestazione, prima riga della fascia: flex-basis 100%
+   lo manda a capo da solo, cosi' la riga sotto resta label + data + coda
+   come prima. Senza nome la fascia diceva "entro il 30/10" senza dire
+   entro il 30/10 per che cosa. */
+.isc-scadenza-gara {
+    flex:0 0 100%; font-family:'Bebas Neue',sans-serif; font-size:21px;
+    letter-spacing:1.5px; line-height:1.1; color:var(--white);
+    margin-bottom:2px;
+}
+.isc-scadenza-quando { font-family:'Barlow Condensed',sans-serif;
+                       font-size:12px; letter-spacing:1px;
+                       color:var(--muted); }
+
 /* Stessa fascia, ma rossa: la pre-iscrizione scade fra pochi giorni o e'
    gia' scaduta. Il rosso sta solo qui, sulla data che fa perdere la gara,
    se no smette di voler dire qualcosa. */
