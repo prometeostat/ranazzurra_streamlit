@@ -1136,6 +1136,57 @@ UPDATE athlete_races SET
 WHERE id = %s
 """
 
+# Correzione dallo staff: sposta un'iscrizione su un'altra gara e/o cambia
+# il tempo, in una botta sola. La usa Gestione > Iscrizioni gare, dove la
+# tabella si modifica come un foglio di calcolo.
+#
+# Lo spostamento resta dentro la manifestazione, e il vincolo sta qui nella
+# WHERE e non solo in Python: la gara di destinazione deve appartenere alla
+# stessa manifestazione di quella di partenza. Cosi' una pagina rimasta
+# aperta su una manifestazione e salvata dopo averne scelta un'altra non
+# puo' spostare un'iscrizione dove capita. Se la condizione non regge
+# l'UPDATE tocca zero righe e chi chiama se ne accorge dal conteggio.
+#
+# Il doppione lo blocca comunque l'indice unico parziale su
+# (race_id, athlete_id) WHERE is_deleted = FALSE, ma crud lo controlla
+# prima: un messaggio che dice chi e in quale gara vale piu' di un errore
+# di vincolo risalito dal driver.
+# %s: race_id nuovo, entry_time, user_id, entry_id, race_id nuovo
+ENTRY_MOVE_SQL = """
+UPDATE athlete_races ar SET
+    race_id    = %s,
+    entry_time = %s,
+    last_modification_user_id = %s
+FROM races vecchia, races nuova
+WHERE ar.id = %s
+  AND vecchia.id = ar.race_id
+  AND nuova.id   = %s
+  AND nuova.is_deleted = FALSE
+  AND nuova.competition_id = vecchia.competition_id
+"""
+
+# Stato vero di tutte le iscrizioni attive di una manifestazione, riletto
+# subito prima di scrivere: fra il momento in cui la pagina ha disegnato la
+# tabella e quello del salvataggio puo' essere entrata una riga da un'altra
+# sessione, dall'atleta o da Inserisci tempi. Niente cache, apposta.
+# %s: comp_id
+COMP_ENTRIES_STATE_SQL = """
+SELECT
+    ar.id          AS entry_id,
+    ar.race_id,
+    ar.athlete_id,
+    ar.entry_time,
+    ar.final_time,
+    btrim(a.last_name) || ' ' || btrim(a.first_name) AS atleta,
+    r.name                                           AS gara,
+    re.is_relay
+FROM athlete_races ar
+JOIN races       r  ON r.id  = ar.race_id       AND r.is_deleted  = FALSE
+JOIN race_events re ON re.id = r.race_event_id  AND re.is_deleted = FALSE
+JOIN athletes    a  ON a.id  = ar.athlete_id
+WHERE r.competition_id = %s AND ar.is_deleted = FALSE
+"""
+
 # Le mie iscrizioni: le manifestazioni in programma piu' quelle passate per
 # cui mi ero iscritto davvero (entry_time valorizzato). Le righe senza
 # entry_time di gare gia' nuotate sono risultati caricati dall'admin, non

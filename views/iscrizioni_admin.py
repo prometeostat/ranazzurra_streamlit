@@ -5,9 +5,17 @@ Si sceglie la manifestazione e si vede chi si e' iscritto, a quali gare e
 con quale tempo, con le staffette tenute da parte perche' sono gare a se'.
 In fondo il foglio Excel da scaricare per organizzare la trasferta.
 
-Letture e basta: qui dentro non si scrive niente. Le correzioni passano da
-Inserisci tempi (tempi e punti) o dall'atleta stesso finche' la finestra di
-iscrizione e' aperta.
+Due colonne si correggono direttamente in tabella, come in un foglio di
+calcolo: **Gara** (una tendina con le gare di questa manifestazione) e
+**Tempo iscrizione**. Serve per i casi che arrivano sempre a ridosso della
+chiusura: uno ha chiesto i 100 e intendeva i 200, un altro manda il tempo
+giusto per messaggio il giorno prima. Prima bisognava farselo correggere
+dall'atleta, e a finestra chiusa non si poteva piu'.
+
+Non si aggiungono e non si tolgono iscrizioni da qui: per quelle ci sono
+Iscriviti (l'atleta, finche' la finestra e' aperta) e Inserisci tempi
+(l'amministratore, con tempi e punti). Cambiare gara **sposta** la riga
+invece di rifarla, cosi' si porta dietro la sua storia.
 """
 from __future__ import annotations
 
@@ -19,7 +27,6 @@ import streamlit as st
 
 import auth
 import crud
-from theme import fmt_time
 from views._common import page_header
 
 page_header("Iscrizioni gare", "Chi si e' iscritto e a cosa")
@@ -27,6 +34,10 @@ page_header("Iscrizioni gare", "Chi si e' iscritto e a cosa")
 if not auth.is_staff():
     st.info("Sezione riservata ad allenatori e amministratore.")
     st.stop()
+
+msg = st.session_state.pop("isca_msg", None)
+if msg:
+    st.success(msg)
 
 manif = crud.elenco_manifestazioni()
 if manif.empty:
@@ -111,10 +122,6 @@ if vista.empty:
     st.stop()
 
 
-def _tempo(v) -> str:
-    return "—" if pd.isna(v) else fmt_time(v)
-
-
 def _giornata(v) -> str:
     return "—" if pd.isna(v) else pd.to_datetime(v).strftime("%d/%m/%Y")
 
@@ -123,27 +130,111 @@ def _numero(v) -> str:
     return "—" if pd.isna(v) else str(int(v))
 
 
+# ── La tabella, con due colonne che si correggono ─────────────────
+# La tendina della gara porta tutte le gare della manifestazione, staffette
+# comprese: chi corregge sa cosa sta facendo, e una frazione finita per
+# sbaglio fra le individuali va rimessa a posto proprio da qui.
+gare = crud.gare_manifestazione(int(comp_id))
+ETICHETTE: dict[int, str] = {}
+for r in gare.to_dict("records"):
+    rid = int(r["race_id"])
+    nome = str(r.get("name") or r.get("etichetta") or rid)
+    vasca = ("" if pd.isna(r.get("pool_length"))
+             else f' · {int(r["pool_length"])}m')
+    ETICHETTE[rid] = f"{nome}{vasca}"
+# Due gare possono chiamarsi uguale (stessa gara in due vasche, o due
+# batterie con lo stesso nome): l'etichetta e' la chiave con cui la tendina
+# torna indietro, quindi deve essere unica o si riscriverebbe la riga
+# sbagliata. Dove si ripete le si attacca il numero di programma.
+_conta: dict[str, int] = {}
+for rid, et in ETICHETTE.items():
+    _conta[et] = _conta.get(et, 0) + 1
+for rid, et in list(ETICHETTE.items()):
+    if _conta[et] > 1:
+        ETICHETTE[rid] = f"{et} #{rid}"
+INDIETRO = {v: k for k, v in ETICHETTE.items()}
+OPZIONI = list(ETICHETTE.values())
+
 # Le righe arrivano gia' nell'ordine di programma: giornata, fascia, numero,
 # e dentro per cognome. Le colonne sono quelle che servono in vasca.
+# entry_id viaggia nella tabella ma non si vede (column_order lo esclude):
+# st.data_editor segue le righe per posizione, e senza un identificatore nel
+# dato non si saprebbe quale iscrizione si sta correggendo.
 tabella = pd.DataFrame({
+    "entry_id": vista["entry_id"].astype("Int64"),
     "Atleta": vista["atleta"].str.title(),
-    "Gara": vista.apply(lambda r: str(r["gara"] or r["etichetta"]), axis=1),
-    "Tempo iscrizione": vista["entry_sec"].map(_tempo),
+    "Gara": vista["race_id"].map(
+        lambda v: ETICHETTE.get(int(v), "—") if pd.notna(v) else "—"),
+    "Tempo iscrizione": vista["entry_sec"].map(crud.tempo_in_testo),
     "Giornata": vista["race_date"].map(_giornata),
     "Fascia": vista["sessione"].map(lambda v: "—" if pd.isna(v) else str(v)),
     "N.": vista["race_order"].map(_numero),
 })
-st.dataframe(
-    tabella, use_container_width=True, hide_index=True,
+
+puo_scrivere = not auth.sola_lettura()
+if not puo_scrivere:
+    st.info("Stai guardando come un altro atleta: da qui non si scrive.")
+
+# La chiave porta dentro manifestazione e filtri: cambiando uno dei tre la
+# tabella e' un'altra, e Streamlit deve ripartire da zero invece di
+# riapplicare per posizione le modifiche in sospeso a righe diverse.
+chiave_griglia = f"isca_grid_{int(comp_id)}_{tipo}_{cerca.strip().lower()}"
+modificate = st.data_editor(
+    tabella, key=chiave_griglia, num_rows="fixed",
+    use_container_width=True, hide_index=True, disabled=not puo_scrivere,
+    column_order=("Atleta", "Gara", "Tempo iscrizione", "Giornata",
+                  "Fascia", "N."),
     column_config={
+        "Atleta": st.column_config.TextColumn("Atleta", disabled=True),
+        "Gara": st.column_config.SelectboxColumn(
+            "Gara", options=OPZIONI, required=True, width="large",
+            help="Sposta l'iscrizione su un'altra gara di questa "
+                 "manifestazione."),
+        "Tempo iscrizione": st.column_config.TextColumn(
+            "Tempo iscrizione", width="small",
+            help="29.45 · 1:02.35 · 1:01:02.35. Vuoto vuol dire iscritto "
+                 "senza tempo."),
+        "Giornata": st.column_config.TextColumn("Giornata", disabled=True),
+        "Fascia": st.column_config.TextColumn("Fascia", disabled=True),
         "N.": st.column_config.TextColumn(
-            "N.", help="Numero di programma dentro la fascia oraria."),
+            "N.", disabled=True,
+            help="Numero di programma dentro la fascia oraria."),
     },
 )
+
+
+def _righe(df: pd.DataFrame) -> list[dict]:
+    """Dalla griglia alla forma che vuole crud: id, gara scelta, tempo."""
+    return [{"entry_id": (None if pd.isna(r.get("entry_id"))
+                          else int(r["entry_id"])),
+             "race_id": INDIETRO.get(r.get("Gara")),
+             "tempo": r.get("Tempo iscrizione")}
+            for _, r in df.iterrows()]
+
+
+if puo_scrivere and st.button("Salva le correzioni", type="primary",
+                              use_container_width=True):
+    conteggi, errori = crud.salva_iscrizioni_staff(
+        int(comp_id), _righe(modificate), _righe(tabella))
+    if errori:
+        for e in errori:
+            st.error(e)
+        st.caption("Non è stato scritto niente: correggi e salva di nuovo.")
+    elif conteggi.get("modificate"):
+        n = conteggi["modificate"]
+        st.session_state["isca_msg"] = (
+            f"Salvata 1 correzione." if n == 1
+            else f"Salvate {n} correzioni.")
+        st.rerun()
+    else:
+        st.info("Non c'era niente da cambiare.")
+
 st.caption(f"{len(vista)} iscrizioni su {len(isc)} della manifestazione, "
-           "nell'ordine del programma. Giornata e fascia si compilano in "
-           "Anagrafica manifestazioni, nel riquadro Programma: dove mancano "
-           "la riga resta in fondo con i trattini.")
+           "nell'ordine del programma. Gara e tempo si correggono qui, il "
+           "resto no: giornata, fascia e numero si compilano in Anagrafica "
+           "manifestazioni, nel riquadro Programma, e dove mancano la riga "
+           "resta in fondo con i trattini. Cambiando filtro o ricerca prima "
+           "di salvare, le modifiche non salvate si perdono.")
 
 # ── Excel ─────────────────────────────────────────────────────────
 # Un foglio solo, le colonne che servono in vasca: niente e-mail e niente

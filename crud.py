@@ -26,7 +26,9 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      COMPETITION_DEACTIVATE_SQL, COMPETITION_INSERT_SQL,
                      COMPETITION_REACTIVATE_SQL, COMPETITION_UPDATE_SQL,
                      COMPETITIONS_ADMIN_SQL, COMP_ENTRIES_ADMIN_SQL,
+                     COMP_ENTRIES_STATE_SQL,
                      COMP_RACES_SQL, ENTRY_DEACTIVATE_SQL, ENTRY_INSERT_SQL,
+                     ENTRY_MOVE_SQL,
                      ENTRY_OWNER_SQL, ENTRY_REACTIVATE_SQL, ENTRY_STATE_SQL,
                      ENTRY_UPDATE_SQL,
                      RACE_DEACTIVATE_SQL, RACE_ENTRIES_SQL, RACE_EVENTS_SQL,
@@ -1033,6 +1035,264 @@ def iscrizioni_manifestazione(comp_id: int) -> pd.DataFrame:
     if "race_date" in df.columns:
         df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
     return df
+
+
+# ══════════════════════════════════════════════════════════════════
+# Correzioni dallo staff sulle iscrizioni ricevute
+# ══════════════════════════════════════════════════════════════════
+# In Gestione > Iscrizioni gare la tabella si modifica come un foglio di
+# calcolo: si cambia la gara (l'atleta aveva chiesto i 100 e intendeva i
+# 200) e il tempo d'iscrizione. Due colonne, niente di piu': qui non si
+# aggiungono e non si tolgono iscrizioni, per quelle ci sono Iscriviti e
+# Inserisci tempi.
+#
+# Si sposta la riga invece di cancellarne una e crearne un'altra, cosi' si
+# porta dietro la sua storia: da quando esiste, chi l'ha creata, e
+# l'eventuale tempo gia' registrato.
+#
+# Come salva_tempi: prima si controlla tutto il lotto, poi si scrive. Se una
+# riga e' sbagliata non parte nessuna query, se no si resta a meta' strada
+# con meta' correzioni applicate e l'altra meta' no.
+
+
+def _stato_iscrizioni_manif(comp_id: int) -> dict[int, dict]:
+    """Le iscrizioni attive della manifestazione, rilette a database."""
+    df = query_df(COMP_ENTRIES_STATE_SQL, (int(comp_id),))
+    if df.empty:
+        return {}
+    return {int(r["entry_id"]): r for r in df.to_dict("records")}
+
+
+def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
+                           originali: list[dict]) -> tuple[dict, list[str]]:
+    """
+    Applica le correzioni fatte nella tabella delle iscrizioni ricevute.
+
+    righe: una voce per riga con entry_id, race_id (la gara scelta nella
+    tendina) e tempo (testo). originali: com'era prima, per scrivere solo
+    quello che e' cambiato davvero.
+
+    Torna ({modificate: n}, errori). Con errori non scritti si scrive zero.
+    """
+    errori: list[str] = []
+    stato = _stato_iscrizioni_manif(int(comp_id))
+    if not stato:
+        return {}, ["Nessuna iscrizione attiva per questa manifestazione: "
+                    "ricarica la pagina."]
+
+    gare = gare_manifestazione(int(comp_id))
+    valide = (set(gare["race_id"].dropna().astype(int)) if not gare.empty
+              else set())
+    nomi_gara = ({int(r["race_id"]): str(r.get("name") or r.get("etichetta")
+                                         or r["race_id"])
+                  for r in gare.to_dict("records")} if not gare.empty else {})
+
+    prima = {int(o["entry_id"]): o for o in originali
+             if o.get("entry_id") is not None}
+
+    pronte: list[dict] = []
+    viste: set[int] = set()
+
+    for r in righe:
+        eid = r.get("entry_id")
+        if eid is None or (isinstance(eid, float) and pd.isna(eid)):
+            continue                      # riga senza id: non e' nostra
+        eid = int(eid)
+        if eid in viste:
+            errori.append("La stessa iscrizione compare due volte nella "
+                          "tabella: ricarica la pagina.")
+            continue
+        viste.add(eid)
+
+        attuale = stato.get(eid)
+        if attuale is None:
+            errori.append(
+                "Una delle iscrizioni non c'e' piu' a database: qualcuno "
+                "l'ha tolta mentre eri su questa pagina. Ricarica.")
+            continue
+        chi = str(attuale.get("atleta") or "").title()
+
+        rid = r.get("race_id")
+        if rid is None or (isinstance(rid, float) and pd.isna(rid)):
+            errori.append(f"{chi}: manca la gara.")
+            continue
+        rid = int(rid)
+        if rid not in valide:
+            errori.append(f"{chi}: la gara scelta non e' di questa "
+                          "manifestazione.")
+            continue
+
+        tempo, err = tempo_da_testo(r.get("tempo"))
+        if err:
+            errori.append(f"{chi}: {err}")
+            continue
+
+        pronte.append({"entry_id": eid, "race_id": rid, "tempo": tempo,
+                       "athlete_id": int(attuale["athlete_id"]),
+                       "chi": chi, "attuale": attuale})
+
+    # Il doppione si cerca sulla fotografia di COME RESTEREBBE la
+    # manifestazione, non solo sulle righe toccate: chi sposta Rossi sui 100
+    # dove Rossi c'e' gia' da prima non vede la collisione nella tabella,
+    # perche' l'altra riga e' rimasta ferma ed e' magari filtrata via.
+    # La chiave e' la stessa dell'indice unico parziale a database.
+    modificate = {p["entry_id"]: p for p in pronte}
+    dopo: dict[tuple[int, int], list[str]] = {}
+    for eid, riga_db in stato.items():
+        p = modificate.get(eid)
+        if p is not None:
+            chiave = (p["race_id"], p["athlete_id"])
+            nome = p["chi"]
+        else:
+            chiave = (int(riga_db["race_id"]), int(riga_db["athlete_id"]))
+            nome = str(riga_db.get("atleta") or "").title()
+        dopo.setdefault(chiave, []).append(nome)
+
+    for (rid, _aid), nomi in sorted(dopo.items()):
+        if len(nomi) > 1:
+            errori.append(
+                f"{nomi[0]} finirebbe {len(nomi)} volte in "
+                f"{nomi_gara.get(rid, rid)}: un atleta puo' stare una volta "
+                "sola nella stessa gara.")
+
+    if errori:
+        return {}, sorted(set(errori))
+
+    # Solo le righe che cambiano davvero: riscrivere quelle uguali sporca
+    # last_modification_user_id per niente.
+    da_scrivere = []
+    for p in pronte:
+        vecchia = prima.get(p["entry_id"])
+        if vecchia is not None:
+            tempo_vecchio, _ = tempo_da_testo(vecchia.get("tempo"))
+            if (p["race_id"] == _intero(vecchia.get("race_id"))
+                    and p["tempo"] == tempo_vecchio):
+                continue
+        da_scrivere.append(p)
+
+    if not da_scrivere:
+        return {"modificate": 0}, []
+
+    ordinate, errore_ordine = _ordina_spostamenti(da_scrivere, stato, valide,
+                                                  nomi_gara)
+    if errore_ordine:
+        return {}, [errore_ordine]
+
+    conteggi = {"modificate": 0}
+    for p, race_id, tempo in ordinate:
+        toccate_ora = execute(ENTRY_MOVE_SQL,
+                              (race_id, tempo, _user_id(),
+                               p["entry_id"], race_id))
+        if not toccate_ora:
+            errori.append(
+                f"{p['chi']}: la riga non e' stata aggiornata, la gara "
+                "scelta non risulta di questa manifestazione.")
+            continue
+        if race_id == p["race_id"]:
+            conteggi["modificate"] += 1
+
+    _svuota_cache()
+    return conteggi, errori
+
+
+def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
+                        valide: set[int],
+                        nomi_gara: dict[int, str]) -> tuple[list, str | None]:
+    """
+    Mette gli spostamenti nell'ordine in cui si possono scrivere davvero.
+
+    Il problema: lo stato finale puo' essere validissimo e lo stesso una
+    singola UPDATE puo' sbattere contro l'indice unico parziale, perche' le
+    righe si spostano una alla volta. Caso tipico, e tutt'altro che raro:
+    un atleta ha chiesto 50 e 100 invertiti, si scambiano le due gare, e la
+    prima UPDATE trova l'altra riga ancora ferma dove deve arrivare.
+
+    Si scrive quindi per gradi: a ogni giro si fanno partire gli spostamenti
+    la cui destinazione e' libera *in quel momento*. Questo scioglie da solo
+    tutte le catene (A va dove nessuno sta, B va nel posto che A ha appena
+    lasciato, e cosi' via).
+
+    Quello che resta dopo un giro senza progressi e' un ciclo chiuso, cioe'
+    uno scambio. Li' si rompe il cerchio parcheggiando una riga su una gara
+    della manifestazione dove quell'atleta non c'e': un giro in piu', e poi
+    la catena si scioglie come le altre. Se una gara libera non esiste si
+    torna indietro con un messaggio, invece di lasciare le cose a meta'.
+
+    Torna (elenco di (riga, race_id, tempo) nell'ordine di scrittura,
+    errore). Il parcheggio compare due volte: una per andarci, una per
+    uscirne.
+    """
+    # Dove sta adesso ogni atleta: chiave dell'indice -> entry_id.
+    posto: dict[tuple[int, int], int] = {
+        (int(r["race_id"]), int(r["athlete_id"])): int(eid)
+        for eid, r in stato.items()}
+
+    rimasti = {p["entry_id"]: p for p in da_scrivere}
+    ordine: list[tuple[dict, int, object]] = []
+    gia_parcheggiate: set[int] = set()
+
+    def _libera(p: dict) -> bool:
+        chi_ce = posto.get((p["race_id"], p["athlete_id"]))
+        return chi_ce is None or chi_ce == p["entry_id"]
+
+    def _sposta(p: dict, dove: int, tempo) -> None:
+        attuale = stato[p["entry_id"]]
+        posto.pop((int(attuale["race_id"]), p["athlete_id"]), None)
+        posto[(dove, p["athlete_id"])] = p["entry_id"]
+        attuale["race_id"] = dove        # la copia locale segue le scritture
+        ordine.append((p, dove, tempo))
+
+    while rimasti:
+        pronti = [p for p in rimasti.values() if _libera(p)]
+        if pronti:
+            for p in pronti:
+                _sposta(p, p["race_id"], p["tempo"])
+                rimasti.pop(p["entry_id"])
+            continue
+
+        # Nessuno puo' muoversi: e' un ciclo chiuso, cioe' uno scambio. Si
+        # rompe il cerchio parcheggiando una riga su una gara della
+        # manifestazione dove quell'atleta non c'e' e dove nessuno degli
+        # spostamenti in sospeso deve arrivare. Al giro dopo la catena si
+        # scioglie da sola, e la riga parcheggiata arriva a destinazione
+        # come tutte le altre: resta in `rimasti` apposta.
+        mete = {q["race_id"] for q in rimasti.values()}
+        scelto = parcheggio = None
+        for p in rimasti.values():
+            if p["entry_id"] in gia_parcheggiate:
+                continue              # una volta a testa, se no si gira a vuoto
+            for rid in sorted(valide):
+                if rid in mete or posto.get((rid, p["athlete_id"])) is not None:
+                    continue
+                scelto, parcheggio = p, rid
+                break
+            if scelto is not None:
+                break
+        if scelto is None:
+            nomi = sorted({q["chi"] for q in rimasti.values()})
+            return [], (
+                f"Lo scambio di gare per {', '.join(nomi)} non si puo' fare "
+                "in un colpo solo: non c'e' una gara libera da cui passare. "
+                "Sposta prima una delle due iscrizioni su un'altra gara e "
+                "salva, poi fai il resto.")
+        # Al parcheggio ci si va con il tempo che la riga ha gia': quello
+        # buono lo scrive il passaggio finale.
+        _sposta(scelto, parcheggio, stato[scelto["entry_id"]]["entry_time"])
+        gia_parcheggiate.add(scelto["entry_id"])
+
+    return ordine, None
+
+
+def _intero(v) -> int | None:
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 @st.cache_data(ttl=60, show_spinner=False)
