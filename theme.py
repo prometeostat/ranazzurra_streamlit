@@ -13,6 +13,8 @@ Due livelli di colore:
 from __future__ import annotations
 
 import math
+import re
+
 import streamlit as st
 
 # ── Colori dei tracciati, uno per tema ────────────────────────────
@@ -86,6 +88,10 @@ _ROOT_DARK = """
     --teal2:  #00e5ea;
     --gold:   #f0b429;
     --green:  #00e676;
+    /* Inchiostro da scrivere SOPRA il verde pieno: sul tema scuro il verde
+       e' acceso e vuole testo scuro, sul chiaro e' cupo e vuole testo
+       bianco. Serve al bottone Calcola del calcolatore. */
+    --green-ink: #04140d;
     --red:    #ff4d6d;
     --white:  #f5f8ff;
     --muted:  #a4b6d2;
@@ -106,6 +112,7 @@ _ROOT_LIGHT = """
     --teal2:  #006a70;
     --gold:   #b8780a;
     --green:  #0a8f4d;
+    --green-ink: #ffffff;
     --red:    #d02b4c;
     --white:  #0e1b30;
     --muted:  #55657f;
@@ -441,6 +448,81 @@ div[class*="st-key-hub_"] .stButton button:hover p:nth-child(2) {
     color: var(--teal) !important;
 }
 
+/* ── Calcolatore: i quattro selettori, due per riga ──
+   Sotto i 640px Streamlit impila le colonne, e quattro tendine in colonna
+   riempiono lo schermo prima ancora di arrivare al campo del tempo. Due per
+   riga: il risultato resta a portata di pollice. */
+div[class*="st-key-calc_scelte_"] div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important; gap: 8px !important;
+}
+div[class*="st-key-calc_scelte_"] div[data-testid="stColumn"] {
+    flex: 1 1 0 !important; width: auto !important; min-width: 0 !important;
+}
+div[class*="st-key-calc_scelte_"] label p {
+    font-size: 11px !important; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--muted) !important;
+    font-family: 'Barlow Condensed', sans-serif !important;
+}
+
+/* ── Calcolatore: le caselle del tempo e il bottone Calcola ──
+   Il blocco sta dentro st.container(key="calc_azione"), e non dentro il
+   st.form, perche' st.form non lascia una classe st-key- a cui agganciarsi.
+
+   Le frecciette su/giu' di st.number_input via: su tre caselle affiancate si
+   mangiavano la larghezza del campo, e un tempo di gara nessuno lo regola un
+   centesimo per clic. Il campo resta numerico, quindi sul telefono apre la
+   tastiera dei numeri. */
+div[class*="st-key-calc_azione"] button[data-testid="stNumberInputStepUp"],
+div[class*="st-key-calc_azione"] button[data-testid="stNumberInputStepDown"] {
+    display: none !important;
+}
+/* Minuti, secondi e centesimi restano in fila anche sul telefono. Sotto i
+   640px Streamlit impila le colonne una sotto l'altra, e un tempo di gara
+   impilato in verticale non si legge piu' come un tempo: stesso rimedio
+   della barra in basso e delle righe dell'agenda. */
+div[class*="st-key-calc_azione"] div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important; gap: 6px !important;
+}
+div[class*="st-key-calc_azione"] div[data-testid="stColumn"] {
+    flex: 1 1 0 !important; width: auto !important; min-width: 0 !important;
+}
+div[class*="st-key-calc_azione"] label p {
+    font-size: 11px !important; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--muted) !important;
+    font-family: 'Barlow Condensed', sans-serif !important;
+}
+div[class*="st-key-calc_azione"] input {
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 26px !important; letter-spacing: 2px;
+    text-align: center !important;
+}
+/* "Press Enter to submit form" sotto ogni casella: Streamlit lo mostra
+   appena il campo prende il fuoco, e su tre caselle in fila diventa rumore.
+   Si nasconde la scritta, non il comportamento: l'Invio continua a
+   calcolare. */
+div[class*="st-key-calc_azione"] [data-testid="InputInstructions"] {
+    display: none !important;
+}
+/* Calcola: verde pieno, che e' l'unico bottone della pagina che fa qualcosa
+   e deve distinguersi dai quattro selettori sopra. Il teal dei primari qui
+   si confonderebbe con i bordi delle schede. */
+div[class*="st-key-calc_azione"] .stFormSubmitButton button {
+    background: var(--green) !important;
+    border: 1px solid var(--green) !important;
+    color: var(--green-ink) !important;
+    font-family: 'Barlow Condensed', sans-serif !important;
+    font-size: 17px !important; font-weight: 700 !important;
+    letter-spacing: 2px; text-transform: uppercase;
+    min-height: 46px; border-radius: 12px !important;
+}
+div[class*="st-key-calc_azione"] .stFormSubmitButton button:hover {
+    filter: brightness(1.12);
+    border-color: var(--green) !important;
+}
+div[class*="st-key-calc_azione"] .stFormSubmitButton button p {
+    color: var(--green-ink) !important;
+}
+
 /* ── Agenda ── */
 .ag-card {
     background: var(--glass); border: 1px solid var(--border);
@@ -722,11 +804,37 @@ footer { display:none !important; }
 """
 
 
+_COMMENTO_CSS = re.compile(r"/\*.*?\*/", re.S)
+
+
+def senza_tag(css: str) -> str:
+    """
+    Toglie i caratteri di maggiore e minore dai commenti del CSS.
+
+    MAI scrivere un tag HTML dentro un commento CSS. Un solo carattere di
+    minore dentro `/* ... */` fa buttare via dal filtro di sicurezza di
+    Streamlit **tutto** il blocco `<style>`: non una regola, tutte. L'app
+    resta senza un grammo di CSS, la barra in basso perde il `position:
+    fixed` e si ritrova in cima alla pagina, le schede si sfasciano, e non
+    compare nessun errore da nessuna parte. E' successo il 26/10/2026, con
+    tre caratteri dentro tre commenti.
+
+    Qui i commenti si ripuliscono da soli, cosi' la cosa non puo' ricapitare
+    per distrazione: dentro un commento le parentesi angolari diventano le
+    loro cugine tipografiche, che non vogliono dire niente per nessun filtro.
+    Fuori dai commenti non si tocca niente: un selettore CSS non ha mai
+    bisogno di un minore, e se ce ne fosse uno sarebbe un errore da vedere.
+    """
+    return _COMMENTO_CSS.sub(
+        lambda m: m.group(0).replace("<", "‹").replace(">", "›"), css)
+
+
 def inject_css() -> None:
     """Da chiamare una volta per rerun, subito dopo set_page_config."""
     root = _ROOT_LIGHT if is_light() else _ROOT_DARK
     extra = _LIGHT_FIXES if is_light() else ""
-    st.html(f"{_FONTS}<style>{root}{_BASE}{extra}</style>")
+    css = senza_tag(f"{root}{_BASE}{extra}")
+    st.html(f"{_FONTS}<style>{css}</style>")
 
 
 # ══════════════════════════════════════════════════════════════════

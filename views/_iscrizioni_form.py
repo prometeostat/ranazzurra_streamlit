@@ -53,6 +53,7 @@ def _elenco_aperte() -> dict[int, dict]:
     return {int(r["comp_id"]): {
         "nome": r.get("nome"),
         "start_date": r.get("start_date"),
+        "apertura": r.get("apertura"),
         "chiusura": r.get("chiusura"),
         "ultimo_giorno": r.get("ultimo_giorno"),
         "organizzatore": r.get("organizzatore"),
@@ -74,6 +75,9 @@ def _elenco_mie(athlete_id: int) -> dict[int, dict]:
     return {int(r["comp_id"]): {
         "nome": r.get("manifestazione"),
         "start_date": r.get("start_date"),
+        # Qui `apertura` non c'e': la mette la rilettura della finestra in
+        # disegna(), che la porta sempre.
+        "apertura": r.get("apertura"),
         "chiusura": r.get("chiusura"),
         "ultimo_giorno": r.get("ultimo_giorno"),
         "organizzatore": None,
@@ -101,33 +105,55 @@ def _scheda_manifestazione(riga: dict, massimo: int | None) -> None:
 
 def _scadenza(riga: dict, aperta: bool) -> None:
     """
-    La data che fa perdere la gara, bene in vista.
+    La data che conta, bene in vista: quella della **pre-iscrizione**.
 
-    Non e' `close_registration_date` ma il giorno prima: l'ultimo giorno
-    serve alla squadra per portare le adesioni sul portale federale, e un
-    atleta che legge la data ufficiale si presenta un giorno tardi.
+    E' il giorno prima dell'apertura ufficiale, quando gli allenatori devono
+    avere le adesioni in mano per portarle sul portale federale. E' la
+    stessa data, calcolata dalla stessa funzione, che l'Agenda scrive nella
+    sua fascia in cima: per il Trofeo di Belluno del 21/11 e' il 30/10. Un
+    atleta che qui leggesse solo il limite tecnico (il giorno prima della
+    *chiusura*, che cade settimane dopo) si presenterebbe tardi convinto di
+    essere in orario, ed e' esattamente l'equivoco da evitare.
 
-    La spiegazione sotto esce solo finche' si puo' scrivere: a termine
-    scaduto la stessa cosa la dice gia', e meglio, il messaggio di chiusura.
+    Il limite tecnico resta scritto sotto, perche' dopo il 30/10 si puo'
+    ancora cambiare qualcosa: ma e' una coda, non la scadenza.
     """
-    ultimo = pd.to_datetime(riga.get("ultimo_giorno"), errors="coerce")
-    if pd.isna(ultimo):
+    sollecito = crud.giorno_sollecito(riga.get("apertura"))
+    ultimo = crud.ultimo_giorno_utile(riga.get("chiusura"))
+    if ultimo is None:
+        ultimo = pd.to_datetime(riga.get("ultimo_giorno"), errors="coerce")
+        ultimo = None if pd.isna(ultimo) else ultimo.date()
+    if sollecito is None and ultimo is None:
         return
-    mancano = (ultimo.date() - pd.Timestamp.today().date()).days
-    coda = ("ultimo giorno" if mancano == 0 else
+
+    oggi = pd.Timestamp.today().date()
+    # Senza la data di apertura non si puo' parlare di pre-iscrizione: si
+    # ripiega sul limite tecnico, com'era prima.
+    quando, etichetta = ((sollecito, "Pre-iscrizione entro il")
+                         if sollecito is not None
+                         else (ultimo, "Iscrizioni entro il"))
+    mancano = (quando - oggi).days
+    coda = ("oggi e' l'ultimo giorno" if mancano == 0 else
             "scaduta" if mancano < 0 else
             "manca 1 giorno" if mancano == 1 else f"mancano {mancano} giorni")
+    stile = ("urgente" if mancano <= crud.GIORNI_SOLLECITO_ROSSO else "")
     st.html(
-        '<div class="isc-scadenza">'
-        '<span class="isc-scadenza-lbl">Iscrizioni entro il</span>'
-        f'<span class="isc-scadenza-data">{ultimo.strftime("%d/%m/%Y")}</span>'
+        f'<div class="isc-scadenza {stile}">'
+        f'<span class="isc-scadenza-lbl">{etichetta}</span>'
+        f'<span class="isc-scadenza-data">{quando.strftime("%d/%m/%Y")}</span>'
         f'<span class="isc-scadenza-coda">{coda}</span></div>')
-    chiusura = pd.to_datetime(riga.get("chiusura"), errors="coerce")
-    if aperta and not pd.isna(chiusura):
-        st.caption(f"La chiusura ufficiale e' il "
-                   f"{chiusura.strftime('%d/%m/%Y')}: l'ultimo giorno resta "
-                   "alla squadra per portare le adesioni sul portale "
-                   "federale, quindi da qui si scrive fino al giorno prima.")
+
+    if sollecito is None or ultimo is None or not aperta:
+        return
+    ultimo_txt = ultimo.strftime("%d/%m/%Y")
+    if mancano < 0:
+        st.caption(f"Il termine per la squadra e' passato: da qui si scrive "
+                   f"ancora fino al {ultimo_txt}, ma l'iscrizione vera "
+                   "potrebbe essere gia' partita. Avvisa i coach.")
+    else:
+        st.caption(f"Entro questa data gli allenatori devono avere le tue "
+                   f"gare. Dopo puoi ancora cambiare qui fino al "
+                   f"{ultimo_txt}, avvisando i coach.")
 
 
 def _elenco_iscritte(gare: pd.DataFrame) -> None:
@@ -229,7 +255,9 @@ def disegna(modo: str = "nuova") -> None:
     # essere scaduto.
     finestra = crud.finestra_iscrizioni(int(comp_id))
     massimo = finestra.get("max_gare")
-    for c in ("chiusura", "ultimo_giorno"):
+    # `apertura` serve alla fascia della pre-iscrizione: nell'elenco di
+    # Modifica non c'e', e la rilettura la porta sempre.
+    for c in ("apertura", "chiusura", "ultimo_giorno"):
         if finestra.get(c) is not None:
             riga[c] = finestra[c]
 

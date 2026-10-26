@@ -896,6 +896,22 @@ def primo_giorno_utile(apertura) -> _dt.date | None:
     return None if quando is None else quando - _dt.timedelta(days=GIORNI_ANTICIPO)
 
 
+def giorno_sollecito(apertura) -> _dt.date | None:
+    """
+    La data entro cui l'atleta deve aver dato le sue gare: il giorno prima
+    dell'**apertura ufficiale**.
+
+    Non e' il limite tecnico, che e' `ultimo_giorno_utile()` e cade molto
+    piu' tardi: e' il giorno in cui gli allenatori devono avere le adesioni
+    in mano per portarle sul portale federale. E' la data che conta per chi
+    nuota, ed e' quella scritta in grande sia nella fascia dell'Agenda sia
+    nella pagina Iscriviti. Sta qui una volta sola perche' le due pagine non
+    possano dire due date diverse.
+    """
+    quando = _data_pura(apertura)
+    return None if quando is None else quando - _dt.timedelta(days=GIORNI_CODA)
+
+
 def stato_finestra(apertura, chiusura,
                    oggi: _dt.date | None = None) -> tuple[bool, str]:
     """
@@ -1354,7 +1370,7 @@ def prossimo_sollecito(athlete_id: int | None,
         return None
 
     oggi = oggi or _dt.date.today()
-    sollecito = apertura - _dt.timedelta(days=GIORNI_CODA)
+    sollecito = giorno_sollecito(apertura)
     ultimo = _data_pura(r.get("ultimo_giorno")) or ultimo_giorno_utile(
         r.get("chiusura"))
 

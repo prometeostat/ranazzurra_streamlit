@@ -4,7 +4,29 @@ Le versioni hanno tre numeri: il primo cambia quando cambia il modo di usare
 l'app, il secondo quando arriva una funzione nuova, il terzo per le
 correzioni. La versione che stai usando è scritta in fondo al Profilo.
 
-## 1.1.0 — 22/10/2026
+## 1.1.0 — 26/10/2026
+
+### Il calcolatore dei punteggi FIN
+
+In **Cerca** c'è il **Calcolatore**, e funziona nei due versi. *Calcolatore
+Punti*: scegli gara, vasca, sesso e categoria, scrivi il tempo in tre
+caselle (minuti, secondi, centesimi), premi **Calcola** e ti dice quanti
+punti vale. *Calcolatore Tempo*: scrivi il punteggio che vuoi e ti dice il
+tempo da nuotare.
+
+I tempi base sono quelli della tabella individuale FIN 2026/2027, quella
+vera, letta dal foglio federale: 1157 tempi base, 18 gare in vasca corta e
+17 in lunga, dalla M20 alla M100. Il tempo base vale 1000 punti esatti, e da
+lì il conto è una proporzione.
+
+Il calcolatore non guarda il database, quindi va bene anche per un tempo che
+non hai ancora nuotato, o per fare il conto a un amico di un'altra squadra.
+Se parti dal punteggio, il tempo che esce è il più lento che vale ancora
+quei punti: un centesimo più piano e si scende sotto.
+
+Qualche casella della tabella federale è vuota per davvero (quasi tutte M100,
+e un paio di M95 nella farfalla): in quei casi il punteggio non si calcola e
+l'app lo dice, invece di inventare un numero.
 
 ### I preferiti restano
 
@@ -25,7 +47,7 @@ Adesso tiene per trenta giorni e si rinnova ogni volta che apri, quindi se
 la usi anche solo ogni tanto non ti chiede più niente. Uscendo con il
 bottone Esci, invece, esce davvero.
 
-### La scadenza delle pre-iscrizioni, in cima all'Agenda
+### La scadenza delle pre-iscrizioni, sempre in vista
 
 In alto nell'**Agenda** c'è una fascia con la data entro cui dare le tue
 gare per la prossima manifestazione. È gialla finché c'è tempo, diventa
@@ -36,8 +58,13 @@ Attenzione a quale data è: **è il giorno prima dell'apertura ufficiale
 delle iscrizioni**, non la chiusura. Quel giorno gli allenatori devono
 avere le adesioni in mano per portarle sul portale federale. Dopo puoi
 ancora cambiare qualcosa dall'app, ma l'iscrizione vera potrebbe essere
-già partita: in quel caso avvisa i coach. Per il Trofeo di Belluno del
-21 novembre la data è il 30 ottobre.
+già partita: in quel caso avvisa i coach. Per il 9° Trofeo Città di
+Belluno del 21 novembre la data è il **30 ottobre**.
+
+La stessa data adesso è anche in cima a **Iscriviti** e a **Modifica**, con
+le stesse parole. Prima lì trovavi solo il termine ultimo per cambiare, che
+cade due settimane dopo: era facile leggerlo e credere di avere tempo. Ora
+in grande c'è la data che conta, e l'altra resta scritta sotto.
 
 ## 1.0.0 — 14/10/2026
 

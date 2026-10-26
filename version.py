@@ -17,13 +17,13 @@ import re
 from pathlib import Path
 
 VERSIONE = "1.1.0"
-DATA_RILASCIO = _dt.date(2026, 10, 22)
+DATA_RILASCIO = _dt.date(2026, 10, 26)
 
 _FILE = Path(__file__).with_name("CHANGELOG.md")
 
 
 def etichetta() -> str:
-    """'v1.1.0 · 22/10/2026', per le righe di piede."""
+    """'v1.1.0 · 26/10/2026', per le righe di piede."""
     return f"v{VERSIONE} · {DATA_RILASCIO.strftime('%d/%m/%Y')}"
 
 

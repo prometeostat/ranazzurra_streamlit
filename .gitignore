@@ -22,6 +22,7 @@
 !data.py
 !db.py
 !pwa.py
+!punteggi.py
 !queries.py
 !season.py
 !theme.py
@@ -38,6 +39,11 @@
 !static/*
 !.streamlit/
 !.streamlit/config.toml
+# La tabella dei tempi base FIN: la legge punteggi.py ed e' l'unica fonte
+# del Calcolatore. Senza di lei le due pagine del calcolatore si fermano
+# con un messaggio, quindi va deployata insieme al codice.
+!dati/
+!dati/*.xlsx
 
 # ── Come si installa ──────────────────────────────────────────────
 !requirements.txt

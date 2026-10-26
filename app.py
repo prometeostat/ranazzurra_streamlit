@@ -76,6 +76,14 @@ PAGINE = {
     "iscrizioni_mie": st.Page("views/iscrizioni_mie.py",
                               title="Le mie iscrizioni",
                               url_path="le-mie-iscrizioni"),
+    "calcolatore": st.Page("views/calcolatore.py", title="Calcolatore",
+                           url_path="calcolatore"),
+    "calcolatore_punti": st.Page("views/calcolatore_punti.py",
+                                 title="Calcolatore punti",
+                                 url_path="calcolatore-punti"),
+    "calcolatore_tempo": st.Page("views/calcolatore_tempo.py",
+                                 title="Calcolatore tempo",
+                                 url_path="calcolatore-tempo"),
     "profilo": st.Page("views/profilo.py", title="Profilo", url_path="profilo"),
     "novita": st.Page("views/novita.py", title="Novità", url_path="novita"),
 }
@@ -105,7 +113,8 @@ VOCI = [
     ("confronta", "⚖️", "Confronta", {"confronta"}),
     ("cerca", "🔍", "Cerca",
      {"cerca", "scheda", "classifiche", "risultati", "iscrizioni",
-      "iscrizioni_nuove", "iscrizioni_modifica", "iscrizioni_mie"}),
+      "iscrizioni_nuove", "iscrizioni_modifica", "iscrizioni_mie",
+      "calcolatore", "calcolatore_punti", "calcolatore_tempo"}),
     ("profilo", "👤", "Profilo", {"profilo", "novita"}),
 ]
 if auth.is_staff():
