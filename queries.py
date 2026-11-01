@@ -42,6 +42,37 @@ def con_fin(sql: str, solo_fin: bool | None = None) -> str:
                        "AND co.is_fin = " + ("TRUE" if solo_fin else "FALSE"))
 
 
+def senza_federnuoto(sql: str) -> str:
+    """
+    Toglie `competitions.id_federnuoto` dalla query, lasciando la colonna
+    vuota.
+
+    Serve nella finestra fra il push e la migrazione. Il deploy su Community
+    Cloud parte da un `git push`, l'`ALTER TABLE` lo si lancia a mano, e fra
+    i due c'e' un buco: in quel buco una query che nomina una colonna che
+    non esiste non restituisce un valore nullo, fallisce tutta. Siccome
+    `elenco_manifestazioni()` la usano l'Anagrafica manifestazioni,
+    Iscrizioni gare e Inserisci tempi, cadrebbero tre pagine che con l'ID
+    FederNuoto non c'entrano niente. E' gia' successo con i preferiti.
+
+    Qui la colonna diventa un NULL e tutto il resto continua a funzionare:
+    il codice non si vede e non si puo' scrivere, che e' esattamente quello
+    che e' vero finche' la colonna non c'e'.
+    """
+    return sql.replace("co.id_federnuoto /*FEDERNUOTO*/", "NULL::varchar")
+
+
+# Esiste la colonna? Una domanda sola, che si fa al catalogo e non alla
+# tabella: non tocca i dati e non si porta dietro un errore da intercettare.
+COLONNA_FEDERNUOTO_SQL = """
+SELECT 1
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name   = 'competitions'
+  AND column_name  = 'id_federnuoto'
+"""
+
+
 # ══════════════════════════════════════════════════════════════════
 # Ordine di programma
 # ══════════════════════════════════════════════════════════════════
@@ -725,6 +756,11 @@ SELECT
     co.pdf_link,
     co.max_races_per_athlete,
     co.is_fin,
+    -- L'alias e' esplicito anche se la colonna si chiama gia' cosi':
+    -- senza_federnuoto() la sostituisce con un NULL, e un NULL senza nome
+    -- arriverebbe a pandas come "?column?", facendo sparire la colonna dal
+    -- DataFrame proprio nel caso in cui serve che ci resti, vuota.
+    co.id_federnuoto /*FEDERNUOTO*/ AS id_federnuoto,
     co.organizer_company_id,
     btrim(org.name)             AS organizzatore,
     co.is_deleted,
@@ -735,20 +771,33 @@ LEFT JOIN companies org ON org.id = co.organizer_company_id
 ORDER BY co.start_date DESC
 """
 
+# `id_federnuoto` e' il codice con cui la FIN identifica la manifestazione
+# sul portale federale (per il 9° Trofeo Citta' di Belluno e' 150103).
+# Nullable: lo storico non ce l'ha e le gare non federali non ce l'hanno per
+# niente. Sta a database come varchar e non come intero, a differenza di
+# athletes.fin_code: e' un identificativo di un altro sistema, e un codice
+# con uno zero davanti letto come numero lo perde per strada.
+#
+#   ALTER TABLE public.competitions
+#       ADD COLUMN id_federnuoto varchar(20) NULL;
+#
+# Serve all'Excel di Gestione > Iscrizioni gare, che lo mette nella prima
+# colonna di ogni riga.
+
 # %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
-#     is_fin, organizer_company_id, user_id
+#     is_fin, id_federnuoto, organizer_company_id, user_id   (13)
 COMPETITION_INSERT_SQL = """
 INSERT INTO competitions
     ("type", start_date, end_date, open_registration_date,
      close_registration_date, timing, website_link, pdf_link,
-     max_races_per_athlete, is_fin, organizer_company_id,
+     max_races_per_athlete, is_fin, id_federnuoto, organizer_company_id,
      creation_user_id, is_deleted)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
 RETURNING id
 """
 
 # %s: nome, start, end, apertura, chiusura, timing, sito, pdf, max_gare,
-#     is_fin, organizer_company_id, user_id, comp_id
+#     is_fin, id_federnuoto, organizer_company_id, user_id, comp_id   (14)
 COMPETITION_UPDATE_SQL = """
 UPDATE competitions SET
     "type"                  = %s,
@@ -761,6 +810,7 @@ UPDATE competitions SET
     pdf_link                = %s,
     max_races_per_athlete   = %s,
     is_fin                  = %s,
+    id_federnuoto           = %s,
     organizer_company_id    = %s,
     last_modification_user_id = %s
 WHERE id = %s
@@ -1136,39 +1186,90 @@ UPDATE athlete_races SET
 WHERE id = %s
 """
 
-# Correzione dallo staff: sposta un'iscrizione su un'altra gara e/o cambia
-# il tempo, in una botta sola. La usa Gestione > Iscrizioni gare, dove la
-# tabella si modifica come un foglio di calcolo.
+# Correzione dallo staff: sposta un'iscrizione su un'altra gara e/o la
+# intesta a un altro atleta e/o cambia il tempo, in una botta sola. La usa
+# Gestione > Iscrizioni gare, dove la tabella si modifica come un foglio di
+# calcolo.
 #
 # Lo spostamento resta dentro la manifestazione, e il vincolo sta qui nella
 # WHERE e non solo in Python: la gara di destinazione deve appartenere alla
 # stessa manifestazione di quella di partenza. Cosi' una pagina rimasta
 # aperta su una manifestazione e salvata dopo averne scelta un'altra non
-# puo' spostare un'iscrizione dove capita. Se la condizione non regge
-# l'UPDATE tocca zero righe e chi chiama se ne accorge dal conteggio.
+# puo' spostare un'iscrizione dove capita. Stesso discorso per l'atleta, con
+# una differenza: esistere deve sempre, essere ancora attivo glielo si
+# chiede solo se l'atleta CAMBIA. Se no non si potrebbe piu' correggere il
+# tempo alla riga di chi ha lasciato la squadra nel frattempo, che e' una
+# cosa normale e non ha niente a che vedere con questa guardia. Se una
+# delle condizioni non regge l'UPDATE tocca zero righe e chi chiama se ne
+# accorge dal conteggio.
 #
 # Il doppione lo blocca comunque l'indice unico parziale su
 # (race_id, athlete_id) WHERE is_deleted = FALSE, ma crud lo controlla
 # prima: un messaggio che dice chi e in quale gara vale piu' di un errore
 # di vincolo risalito dal driver.
-# %s: race_id nuovo, entry_time, user_id, entry_id, race_id nuovo
+# %s: race_id nuovo, athlete_id nuovo, entry_time, user_id, entry_id,
+#     race_id nuovo, athlete_id nuovo
 ENTRY_MOVE_SQL = """
 UPDATE athlete_races ar SET
     race_id    = %s,
+    athlete_id = %s,
     entry_time = %s,
     last_modification_user_id = %s
-FROM races vecchia, races nuova
+FROM races vecchia, races nuova, athletes nuovo
 WHERE ar.id = %s
   AND vecchia.id = ar.race_id
   AND nuova.id   = %s
   AND nuova.is_deleted = FALSE
   AND nuova.competition_id = vecchia.competition_id
+  AND nuovo.id = %s
+  AND (nuovo.is_deleted = FALSE OR nuovo.id = ar.athlete_id)
 """
 
-# Stato vero di tutte le iscrizioni attive di una manifestazione, riletto
-# subito prima di scrivere: fra il momento in cui la pagina ha disegnato la
-# tabella e quello del salvataggio puo' essere entrata una riga da un'altra
+# Iscrizione aggiunta dallo staff direttamente in tabella. Non e' la stessa
+# di SIGNUP_INSERT_SQL, che usa l'atleta per se' e si fida della finestra
+# controllata prima: qui chi scrive e' un terzo, quindi la gara deve
+# risultare di QUESTA manifestazione e l'atleta deve esistere e non essere
+# disattivato, e i due controlli stanno nella WHERE e non solo in Python.
+#
+# L'ON CONFLICT fa da rete se la riga nasce nello stesso momento da
+# un'altra parte (l'atleta che si iscrive mentre l'allenatore salva):
+# invece di fallire aggiorna il tempo, ma solo se il risultato non c'e'
+# ancora. Se il conflitto cade su una riga che ha gia' final_time la UPDATE
+# non scatta, l'INSERT tocca zero righe e chi chiama lo vede dal conteggio.
+#
+# I due cast nella SELECT non sono un vezzo: in un INSERT ... SELECT il
+# parametro sta nella lista del select, e di un NULL senza tipo Postgres puo'
+# non riuscire a dedurre la colonna d'arrivo. Con VALUES, come fa
+# SIGNUP_INSERT_SQL, non servirebbero. Il commento sta qui fuori e non
+# dentro la stringa: un `--` in mezzo a una query sopravvive solo finche'
+# qualcuno non la schiaccia su una riga sola, e da li' in poi si mangia
+# tutto il resto.
+# %s: entry_time, user_id, race_id, comp_id, athlete_id
+STAFF_ENTRY_INSERT_SQL = """
+INSERT INTO athlete_races
+    (race_id, athlete_id, entry_time, creation_user_id, is_deleted)
+SELECT r.id, a.id, %s::time, %s::int, FALSE
+FROM races r, athletes a
+WHERE r.id = %s
+  AND r.is_deleted = FALSE
+  AND r.competition_id = %s
+  AND a.id = %s
+  AND a.is_deleted = FALSE
+ON CONFLICT (race_id, athlete_id) WHERE is_deleted = FALSE
+DO UPDATE SET entry_time = EXCLUDED.entry_time,
+              last_modification_user_id = EXCLUDED.creation_user_id
+WHERE athlete_races.final_time IS NULL
+RETURNING id
+"""
+
+# Stato vero di tutte le iscrizioni di una manifestazione, riletto subito
+# prima di scrivere: fra il momento in cui la pagina ha disegnato la tabella
+# e quello del salvataggio puo' essere entrata una riga da un'altra
 # sessione, dall'atleta o da Inserisci tempi. Niente cache, apposta.
+#
+# Ci sono anche le righe cancellate, con la loro is_deleted: servono per
+# riattivare invece di inserire quando lo staff rimette in tabella
+# un'iscrizione che era stata tolta. Chi legge si divide le due cose da se'.
 # %s: comp_id
 COMP_ENTRIES_STATE_SQL = """
 SELECT
@@ -1177,6 +1278,7 @@ SELECT
     ar.athlete_id,
     ar.entry_time,
     ar.final_time,
+    ar.is_deleted,
     btrim(a.last_name) || ' ' || btrim(a.first_name) AS atleta,
     r.name                                           AS gara,
     re.is_relay
@@ -1184,7 +1286,8 @@ FROM athlete_races ar
 JOIN races       r  ON r.id  = ar.race_id       AND r.is_deleted  = FALSE
 JOIN race_events re ON re.id = r.race_event_id  AND re.is_deleted = FALSE
 JOIN athletes    a  ON a.id  = ar.athlete_id
-WHERE r.competition_id = %s AND ar.is_deleted = FALSE
+WHERE r.competition_id = %s
+ORDER BY ar.is_deleted, ar.id
 """
 
 # Le mie iscrizioni: le manifestazioni in programma piu' quelle passate per

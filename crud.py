@@ -25,8 +25,9 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      ATHLETE_UPDATE_SQL, ATHLETES_ADMIN_SQL, COMPANIES_SQL,
                      COMPETITION_DEACTIVATE_SQL, COMPETITION_INSERT_SQL,
                      COMPETITION_REACTIVATE_SQL, COMPETITION_UPDATE_SQL,
-                     COMPETITIONS_ADMIN_SQL, COMP_ENTRIES_ADMIN_SQL,
-                     COMP_ENTRIES_STATE_SQL,
+                     COMPETITIONS_ADMIN_SQL, COLONNA_FEDERNUOTO_SQL,
+                     COMP_ENTRIES_ADMIN_SQL,
+                     COMP_ENTRIES_STATE_SQL, senza_federnuoto,
                      COMP_RACES_SQL, ENTRY_DEACTIVATE_SQL, ENTRY_INSERT_SQL,
                      ENTRY_MOVE_SQL,
                      ENTRY_OWNER_SQL, ENTRY_REACTIVATE_SQL, ENTRY_STATE_SQL,
@@ -36,7 +37,7 @@ from queries import (ACCESS_LOG_DELETE_SQL, ATHLETE_DEACTIVATE_SQL, ATHLETE_FIN_
                      RACE_UPDATE_SQL, SIGNUP_COUNT_SQL,
                      GESTIONE_CONTEGGI_SQL, MY_SIGNUPS_SQL,
                      SIGNUP_INSERT_SQL, SIGNUP_MEETS_SQL,
-                     SIGNUP_RACES_SQL,
+                     SIGNUP_RACES_SQL, STAFF_ENTRY_INSERT_SQL,
                      SIGNUP_UPDATE_SQL, SIGNUP_WINDOW_SQL, TIMINGS_SQL,
                      FAVORITES_SQL, FAVORITE_DELETE_SQL,
                      FAVORITE_INSERT_SQL)
@@ -308,6 +309,10 @@ def riattiva_atleta(athlete_id: int) -> int:
 # ══════════════════════════════════════════════════════════════════
 MAX_NOME_GARA = 100      # competitions.type e' varchar(100)
 MAX_LINK = 500           # website_link e pdf_link sono varchar(500)
+MAX_ID_FEDERNUOTO = 20   # competitions.id_federnuoto e' varchar(20)
+# Un codice, non una frase: cifre, lettere e trattini, senza spazi. Finisce
+# pari pari in una cella dell'Excel che si carica sul portale federale.
+_ID_FEDERNUOTO_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Fin dove si puo' datare una manifestazione. Non e' un vincolo del database,
 # che sulle `date` accetta molto di piu': e' il calendario sensato per questa
@@ -327,13 +332,52 @@ ULTIMA_DATA_GARA = _dt.date(2999, 12, 31)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def elenco_manifestazioni() -> pd.DataFrame:
-    """Anagrafica manifestazioni, comprese le disattivate."""
-    df = query_df(COMPETITIONS_ADMIN_SQL)
+    """Anagrafica manifestazioni, comprese le disattivate.
+
+    Se `id_federnuoto` a database non c'e' ancora (codice arrivato prima
+    della migrazione) la colonna esce vuota invece di far fallire la query:
+    da questa lettura dipendono tre pagine, vedi queries.senza_federnuoto().
+    """
+    sql = (COMPETITIONS_ADMIN_SQL if ha_id_federnuoto()
+           else senza_federnuoto(COMPETITIONS_ADMIN_SQL))
+    df = query_df(sql)
     for c in ("comp_id", "max_races_per_athlete", "n_gare",
               "organizer_company_id"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def ha_id_federnuoto() -> bool:
+    """
+    Vero se `competitions.id_federnuoto` esiste a database.
+
+    Lo decide il catalogo, non un tentativo andato male: una domanda sola a
+    `information_schema`, cachata cinque minuti. Serve a tre posti: la
+    lettura dell'anagrafica, il campo nel form (che senza colonna si spegne
+    invece di promettere un salvataggio che fallisce) e il messaggio
+    dell'Excel.
+
+    In dubbio risponde True: se la domanda al catalogo non riesce, meglio
+    provarci e vedere l'errore vero che spegnere una funzione che magari
+    c'e'.
+    """
+    try:
+        return not query_df(COLONNA_FEDERNUOTO_SQL).empty
+    except Exception:                                       # noqa: BLE001
+        return True
+
+
+def manca_colonna_federnuoto() -> str | None:
+    """Il messaggio da mostrare quando la colonna non c'e', o None."""
+    if ha_id_federnuoto():
+        return None
+    return ("L'ID FederNuoto non e' ancora attivo su questo database: manca "
+            "la colonna `id_federnuoto` in `competitions`. Il resto "
+            "dell'anagrafica funziona; per accenderlo serve la migrazione "
+            "(ALTER TABLE competitions ADD COLUMN id_federnuoto "
+            "varchar(20) NULL).")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -389,6 +433,19 @@ def valida_manifestazione(dati: dict) -> list[str]:
             errori.append(f"Il {etichetta} deve cominciare con http:// o https://.")
         if len(url) > MAX_LINK:
             errori.append(f"Il {etichetta} e' troppo lungo.")
+
+    # Codice FIN della manifestazione: si puo' lasciare vuoto, ma se c'e'
+    # deve essere un codice, non una frase. Niente spazi in mezzo e niente
+    # caratteri strani, perche' finisce pari pari in una cella dell'Excel
+    # che si carica sul portale federale.
+    codice = (dati.get("id_federnuoto") or "").strip()
+    if codice:
+        if len(codice) > MAX_ID_FEDERNUOTO:
+            errori.append(f"L'ID FederNuoto non puo' superare i "
+                          f"{MAX_ID_FEDERNUOTO} caratteri.")
+        if not _ID_FEDERNUOTO_RE.match(codice):
+            errori.append("L'ID FederNuoto puo' avere solo cifre, lettere e "
+                          "trattini, senza spazi: per esempio 150103.")
     return errori
 
 
@@ -444,6 +501,9 @@ def _pulisci_manifestazione(dati: dict) -> tuple:
         # Manifestazione del calendario federale: in dubbio vale si', come il
         # default della colonna a database.
         bool(dati.get("is_fin", True)),
+        # Codice della manifestazione sul portale federale. Nullable: lo
+        # storico non ce l'ha e le gare non federali non ce l'hanno proprio.
+        testo("id_federnuoto", MAX_ID_FEDERNUOTO),
         # organizer_company_id accetta NULL e buona parte dello storico ce
         # l'ha davvero vuoto: zero e pd.NA valgono "non indicato".
         _intero(dati.get("organizer_company_id")) or None,
@@ -1038,17 +1098,26 @@ def iscrizioni_manifestazione(comp_id: int) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════
-# Correzioni dallo staff sulle iscrizioni ricevute
+# Le iscrizioni gestite dallo staff
 # ══════════════════════════════════════════════════════════════════
-# In Gestione > Iscrizioni gare la tabella si modifica come un foglio di
+# In Gestione > Iscrizioni gare la tabella si lavora come un foglio di
 # calcolo: si cambia la gara (l'atleta aveva chiesto i 100 e intendeva i
-# 200) e il tempo d'iscrizione. Due colonne, niente di piu': qui non si
-# aggiungono e non si tolgono iscrizioni, per quelle ci sono Iscriviti e
-# Inserisci tempi.
+# 200), si corregge il tempo d'iscrizione, si aggiunge chi ha dato
+# l'adesione a voce o a finestra chiusa, si toglie chi ha dato forfait. Tre
+# colonne piu' il cestino e il + della griglia.
 #
-# Si sposta la riga invece di cancellarne una e crearne un'altra, cosi' si
-# porta dietro la sua storia: da quando esiste, chi l'ha creata, e
-# l'eventuale tempo gia' registrato.
+# Cambiare gara o atleta SPOSTA la riga invece di cancellarne una e crearne
+# un'altra, cosi' si porta dietro la sua storia: da quando esiste, chi
+# l'ha creata, e l'eventuale tempo gia' registrato. Togliere e' un soft
+# delete come in tutta l'app, e rimettere in tabella la stessa coppia
+# atleta-gara riattiva la riga di prima invece di accumularne una seconda.
+#
+# Due cose non si fanno da qui, e il rifiuto e' esplicito:
+#   - togliere un'iscrizione che ha gia' il tempo di gara;
+#   - intestare a un altro atleta una riga che ha gia' il tempo di gara.
+# Quelli sono risultati, e si toccano da Inserisci tempi. Spostare di gara
+# una riga che ha gia' il tempo invece si puo', ed e' voluto: e' il modo di
+# rimettere a posto un tempo caricato sulla gara sbagliata.
 #
 # Come salva_tempi: prima si controlla tutto il lotto, poi si scrive. Se una
 # riga e' sbagliata non parte nessuna query, se no si resta a meta' strada
@@ -1056,67 +1125,136 @@ def iscrizioni_manifestazione(comp_id: int) -> pd.DataFrame:
 
 
 def _stato_iscrizioni_manif(comp_id: int) -> dict[int, dict]:
-    """Le iscrizioni attive della manifestazione, rilette a database."""
+    """
+    Tutte le iscrizioni della manifestazione, cancellate comprese, rilette
+    a database e senza passare da nessuna cache.
+
+    Le righe morte servono per riattivare invece di inserire: chi chiama si
+    divide le due cose guardando is_deleted.
+    """
     df = query_df(COMP_ENTRIES_STATE_SQL, (int(comp_id),))
     if df.empty:
         return {}
     return {int(r["entry_id"]): r for r in df.to_dict("records")}
 
 
+def _atleti_scrivibili() -> dict[int, str]:
+    """
+    athlete_id -> nome, per i soli atleti attivi in anagrafica.
+
+    Serve a dare un messaggio decente quando in tabella finisce qualcuno
+    che non c'e' (o che e' stato disattivato nel frattempo). La guardia che
+    conta sta comunque nella WHERE delle query di scrittura: qui si fa
+    anche il controllo su is_athlete, che a database non e' un vincolo ma
+    in squadra sì, perche' un dirigente non si iscrive alle gare.
+    """
+    df = elenco_atleti()
+    if df.empty:
+        return {}
+    vivi = df[(df["is_deleted"] == False)                          # noqa: E712
+              & (df["is_athlete"].astype(bool))]
+    return {int(r["athlete_id"]):
+            (f'{str(r.get("last_name") or "").strip()} '
+             f'{str(r.get("first_name") or "").strip()}').strip().title()
+            for r in vivi.to_dict("records")}
+
+
+# I tre conteggi che salva_iscrizioni_staff torna sempre, anche a zero: la
+# pagina ci costruisce il messaggio, e con le chiavi garantite non deve
+# indovinare quali ci sono. E' condiviso, quindi si copia prima di usarlo.
+ESITO_VUOTO = {"modificate": 0, "inserite": 0, "tolte": 0}
+
+
 def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
                            originali: list[dict]) -> tuple[dict, list[str]]:
     """
-    Applica le correzioni fatte nella tabella delle iscrizioni ricevute.
+    Applica quello che lo staff ha fatto nella tabella delle iscrizioni.
 
-    righe: una voce per riga con entry_id, race_id (la gara scelta nella
-    tendina) e tempo (testo). originali: com'era prima, per scrivere solo
-    quello che e' cambiato davvero.
+    righe: una voce per riga della griglia, con athlete_id e race_id scelti
+    nelle tendine, tempo (testo) ed entry_id, che e' None sulle righe
+    aggiunte. Su una riga che esiste gia' l'athlete_id si puo' anche non
+    passare: vuol dire che resta intestata a chi ce l'ha adesso.
 
-    Torna ({modificate: n}, errori). Con errori non scritti si scrive zero.
+    originali: com'era la tabella quando la pagina l'ha disegnata. Serve a
+    due cose: scrivere solo quello che e' cambiato davvero, e sapere quali
+    righe sono state TOLTE, cioe' quelle che c'erano e non tornano indietro.
+
+    Attenzione a `originali`: deve essere la tabella **come si vede**,
+    filtri compresi. Se arrivassero tutte le iscrizioni della
+    manifestazione, quelle che il filtro nasconde sembrerebbero cancellate.
+
+    Torna ({modificate, inserite, tolte}, errori). Se un controllo non
+    passa non parte nessuna query.
     """
     errori: list[str] = []
-    stato = _stato_iscrizioni_manif(int(comp_id))
-    if not stato:
-        return {}, ["Nessuna iscrizione attiva per questa manifestazione: "
-                    "ricarica la pagina."]
+    tutte = _stato_iscrizioni_manif(int(comp_id))
+    stato = {eid: r for eid, r in tutte.items() if not r.get("is_deleted")}
+
+    # Coppia gara-atleta -> riga morta, per riattivare invece di inserire.
+    # Se per la stessa coppia ce n'e' piu' d'una si tiene la piu' vecchia.
+    morte: dict[tuple[int, int], int] = {}
+    for eid in sorted(tutte):
+        r = tutte[eid]
+        if r.get("is_deleted"):
+            morte.setdefault((int(r["race_id"]), int(r["athlete_id"])), eid)
 
     gare = gare_manifestazione(int(comp_id))
-    valide = (set(gare["race_id"].dropna().astype(int)) if not gare.empty
-              else set())
-    nomi_gara = ({int(r["race_id"]): str(r.get("name") or r.get("etichetta")
-                                         or r["race_id"])
-                  for r in gare.to_dict("records")} if not gare.empty else {})
+    if gare.empty:
+        return {}, ["Questa manifestazione non ha gare: il programma si "
+                    "compila in Anagrafica manifestazioni."]
+    valide = set(gare["race_id"].dropna().astype(int))
+    nomi_gara = {int(r["race_id"]): str(r.get("name") or r.get("etichetta")
+                                        or r["race_id"])
+                 for r in gare.to_dict("records")}
+    squadra = _atleti_scrivibili()
 
     prima = {int(o["entry_id"]): o for o in originali
              if o.get("entry_id") is not None}
 
-    pronte: list[dict] = []
+    pronte: list[dict] = []        # righe che esistono: si aggiornano
+    nuove: list[dict] = []         # righe aggiunte in tabella: si inseriscono
     viste: set[int] = set()
 
-    for r in righe:
-        eid = r.get("entry_id")
-        if eid is None or (isinstance(eid, float) and pd.isna(eid)):
-            continue                      # riga senza id: non e' nostra
-        eid = int(eid)
-        if eid in viste:
-            errori.append("La stessa iscrizione compare due volte nella "
-                          "tabella: ricarica la pagina.")
-            continue
-        viste.add(eid)
-
-        attuale = stato.get(eid)
-        if attuale is None:
+    for i, r in enumerate(righe, start=1):
+        eid = _intero(r.get("entry_id"))
+        attuale = stato.get(eid) if eid is not None else None
+        if eid is not None and attuale is None:
             errori.append(
                 "Una delle iscrizioni non c'e' piu' a database: qualcuno "
                 "l'ha tolta mentre eri su questa pagina. Ricarica.")
             continue
-        chi = str(attuale.get("atleta") or "").title()
+        if eid is not None:
+            if eid in viste:
+                errori.append("La stessa iscrizione compare due volte nella "
+                              "tabella: ricarica la pagina.")
+                continue
+            viste.add(eid)
 
-        rid = r.get("race_id")
-        if rid is None or (isinstance(rid, float) and pd.isna(rid)):
+        aid = _intero(r.get("athlete_id"))
+        if aid is None and attuale is not None:
+            aid = int(attuale["athlete_id"])   # riga che esiste: resta sua
+        rid = _intero(r.get("race_id"))
+
+        # Il nome serve nei messaggi: su una riga che esiste e' quello a
+        # database, su una aggiunta quello appena scelto nella tendina, e
+        # se manca anche quello si cita il numero di riga.
+        chi = (str(attuale.get("atleta") or "").title() if attuale
+               else squadra.get(aid) or f"Riga {i}")
+
+        if aid is None:
+            errori.append(f"{chi}: manca l'atleta.")
+            continue
+        # Su una riga che esiste l'atleta di adesso puo' essere stato
+        # disattivato in anagrafica dopo l'iscrizione: non e' colpa di chi
+        # sta salvando, e finche' non lo cambia la riga resta dov'e'.
+        if aid not in squadra and not (attuale is not None
+                                       and aid == int(attuale["athlete_id"])):
+            errori.append(f"{chi}: non e' fra gli atleti attivi "
+                          "dell'anagrafica.")
+            continue
+        if rid is None:
             errori.append(f"{chi}: manca la gara.")
             continue
-        rid = int(rid)
         if rid not in valide:
             errori.append(f"{chi}: la gara scelta non e' di questa "
                           "manifestazione.")
@@ -1127,9 +1265,43 @@ def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
             errori.append(f"{chi}: {err}")
             continue
 
-        pronte.append({"entry_id": eid, "race_id": rid, "tempo": tempo,
-                       "athlete_id": int(attuale["athlete_id"]),
-                       "chi": chi, "attuale": attuale})
+        if attuale is None:
+            nuove.append({"athlete_id": aid, "race_id": rid, "tempo": tempo,
+                          "chi": chi})
+            continue
+
+        if (aid != int(attuale["athlete_id"])
+                and attuale.get("final_time") is not None):
+            errori.append(
+                f"{chi}: c'e' gia' il tempo di gara, l'iscrizione non si "
+                "puo' intestare a un altro atleta. Il risultato si corregge "
+                "da Inserisci tempi.")
+            continue
+
+        pronte.append({"entry_id": eid, "race_id": rid, "athlete_id": aid,
+                       "tempo": tempo, "chi": chi, "attuale": attuale})
+
+    # Le righe che c'erano in tabella e non tornano indietro: tolte col
+    # cestino. Si guarda `prima`, cioe' quello che la pagina mostrava: le
+    # iscrizioni nascoste da un filtro non sono in quell'elenco e quindi
+    # non possono sembrare cancellate.
+    tolte: list[dict] = []
+    for eid in sorted(prima):
+        if eid in viste:
+            continue
+        attuale = stato.get(eid)
+        if attuale is None:
+            continue                  # l'ha gia' tolta qualcun altro
+        chi = str(attuale.get("atleta") or "").title()
+        if attuale.get("final_time") is not None:
+            errori.append(
+                f"{chi}: c'e' gia' il tempo di gara, l'iscrizione non si "
+                "puo' togliere. Il risultato si cancella da Inserisci "
+                "tempi.")
+            continue
+        tolte.append({"entry_id": eid, "chi": chi})
+
+    via = {t["entry_id"] for t in tolte}
 
     # Il doppione si cerca sulla fotografia di COME RESTEREBBE la
     # manifestazione, non solo sulle righe toccate: chi sposta Rossi sui 100
@@ -1139,6 +1311,8 @@ def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
     modificate = {p["entry_id"]: p for p in pronte}
     dopo: dict[tuple[int, int], list[str]] = {}
     for eid, riga_db in stato.items():
+        if eid in via:
+            continue                  # sta per sparire: non occupa niente
         p = modificate.get(eid)
         if p is not None:
             chiave = (p["race_id"], p["athlete_id"])
@@ -1147,6 +1321,8 @@ def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
             chiave = (int(riga_db["race_id"]), int(riga_db["athlete_id"]))
             nome = str(riga_db.get("atleta") or "").title()
         dopo.setdefault(chiave, []).append(nome)
+    for n in nuove:
+        dopo.setdefault((n["race_id"], n["athlete_id"]), []).append(n["chi"])
 
     for (rid, _aid), nomi in sorted(dopo.items()):
         if len(nomi) > 1:
@@ -1165,39 +1341,80 @@ def salva_iscrizioni_staff(comp_id: int, righe: list[dict],
         vecchia = prima.get(p["entry_id"])
         if vecchia is not None:
             tempo_vecchio, _ = tempo_da_testo(vecchia.get("tempo"))
+            aid_vecchio = _intero(vecchia.get("athlete_id"))
+            if aid_vecchio is None:
+                aid_vecchio = int(p["attuale"]["athlete_id"])
             if (p["race_id"] == _intero(vecchia.get("race_id"))
+                    and p["athlete_id"] == aid_vecchio
                     and p["tempo"] == tempo_vecchio):
                 continue
         da_scrivere.append(p)
 
-    if not da_scrivere:
-        return {"modificate": 0}, []
+    if not (da_scrivere or nuove or tolte):
+        return dict(ESITO_VUOTO), []
 
-    ordinate, errore_ordine = _ordina_spostamenti(da_scrivere, stato, valide,
-                                                  nomi_gara)
-    if errore_ordine:
-        return {}, [errore_ordine]
+    # L'ordine degli spostamenti si calcola PRIMA di scrivere qualunque
+    # cosa: se non si riesce a trovarlo, il database deve restare com'era e
+    # non a meta' strada. La fotografia di partenza e' quella senza le
+    # righe che stiamo per togliere, perche' le cancellazioni vanno per
+    # prime e liberano i posti.
+    vivi = {eid: r for eid, r in stato.items() if eid not in via}
+    ordinate: list[tuple[dict, int, int, object]] = []
+    if da_scrivere:
+        ordinate, errore_ordine = _ordina_spostamenti(da_scrivere, vivi,
+                                                      valide)
+        if errore_ordine:
+            return {}, [errore_ordine]
 
-    conteggi = {"modificate": 0}
-    for p, race_id, tempo in ordinate:
+    conteggi = dict(ESITO_VUOTO)
+
+    # 1. Le cancellazioni, che liberano le coppie gara-atleta su cui
+    #    possono dover arrivare gli spostamenti e gli inserimenti.
+    for t in tolte:
+        if execute(ENTRY_DEACTIVATE_SQL, (_user_id(), t["entry_id"])):
+            conteggi["tolte"] += 1
+
+    # 2. Gli spostamenti, nell'ordine in cui si possono scrivere davvero.
+    for p, race_id, athlete_id, tempo in ordinate:
         toccate_ora = execute(ENTRY_MOVE_SQL,
-                              (race_id, tempo, _user_id(),
-                               p["entry_id"], race_id))
+                              (race_id, athlete_id, tempo, _user_id(),
+                               p["entry_id"], race_id, athlete_id))
         if not toccate_ora:
             errori.append(
-                f"{p['chi']}: la riga non e' stata aggiornata, la gara "
-                "scelta non risulta di questa manifestazione.")
+                f"{p['chi']}: la riga non e' stata aggiornata. La gara "
+                "scelta non risulta di questa manifestazione, oppure "
+                "l'atleta non e' piu' in anagrafica.")
             continue
-        if race_id == p["race_id"]:
+        if race_id == p["race_id"] and athlete_id == p["athlete_id"]:
             conteggi["modificate"] += 1
+
+    # 3. Gli inserimenti, per ultimi: occupano i posti, non ne liberano.
+    for n in nuove:
+        vecchia = morte.get((n["race_id"], n["athlete_id"]))
+        if vecchia is not None:
+            # C'era e l'avevano tolta: si rimette in piedi quella riga
+            # invece di accumularne una seconda sulla stessa gara.
+            toccate_ora = execute(ENTRY_REACTIVATE_SQL,
+                                  (n["tempo"], _user_id(), int(vecchia)))
+        else:
+            toccate_ora = execute(STAFF_ENTRY_INSERT_SQL,
+                                  (n["tempo"], _user_id(), n["race_id"],
+                                   int(comp_id), n["athlete_id"]))
+        if not toccate_ora:
+            errori.append(
+                f"{n['chi']}: l'iscrizione non e' stata aggiunta. Controlla "
+                f"che {nomi_gara.get(n['race_id'], n['race_id'])} sia di "
+                "questa manifestazione, che l'atleta sia in anagrafica e "
+                "che non ci sia gia' una riga con il tempo di gara.")
+            continue
+        conteggi["inserite"] += 1
 
     _svuota_cache()
     return conteggi, errori
 
 
 def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
-                        valide: set[int],
-                        nomi_gara: dict[int, str]) -> tuple[list, str | None]:
+                        valide: set[int]) -> tuple[list, str | None]:
     """
     Mette gli spostamenti nell'ordine in cui si possono scrivere davvero.
 
@@ -1205,7 +1422,9 @@ def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
     singola UPDATE puo' sbattere contro l'indice unico parziale, perche' le
     righe si spostano una alla volta. Caso tipico, e tutt'altro che raro:
     un atleta ha chiesto 50 e 100 invertiti, si scambiano le due gare, e la
-    prima UPDATE trova l'altra riga ancora ferma dove deve arrivare.
+    prima UPDATE trova l'altra riga ancora ferma dove deve arrivare. Vale
+    allo stesso modo per gli atleti: due righe della stessa gara intestate
+    l'una all'altro sono lo stesso scambio visto per l'altro verso.
 
     Si scrive quindi per gradi: a ogni giro si fanno partire gli spostamenti
     la cui destinazione e' libera *in quel momento*. Questo scioglie da solo
@@ -1218,9 +1437,13 @@ def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
     la catena si scioglie come le altre. Se una gara libera non esiste si
     torna indietro con un messaggio, invece di lasciare le cose a meta'.
 
-    Torna (elenco di (riga, race_id, tempo) nell'ordine di scrittura,
-    errore). Il parcheggio compare due volte: una per andarci, una per
-    uscirne.
+    `stato` e' la fotografia su cui si ragiona, cancellazioni di questo
+    salvataggio gia' sottratte, e le righe dentro vengono aggiornate mano a
+    mano per seguire le scritture.
+
+    Torna (elenco di (riga, race_id, athlete_id, tempo) nell'ordine di
+    scrittura, errore). Il parcheggio compare due volte: una per andarci,
+    una per uscirne.
     """
     # Dove sta adesso ogni atleta: chiave dell'indice -> entry_id.
     posto: dict[tuple[int, int], int] = {
@@ -1228,25 +1451,26 @@ def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
         for eid, r in stato.items()}
 
     rimasti = {p["entry_id"]: p for p in da_scrivere}
-    ordine: list[tuple[dict, int, object]] = []
+    ordine: list[tuple[dict, int, int, object]] = []
     gia_parcheggiate: set[int] = set()
 
     def _libera(p: dict) -> bool:
         chi_ce = posto.get((p["race_id"], p["athlete_id"]))
         return chi_ce is None or chi_ce == p["entry_id"]
 
-    def _sposta(p: dict, dove: int, tempo) -> None:
+    def _sposta(p: dict, gara: int, atleta: int, tempo) -> None:
         attuale = stato[p["entry_id"]]
-        posto.pop((int(attuale["race_id"]), p["athlete_id"]), None)
-        posto[(dove, p["athlete_id"])] = p["entry_id"]
-        attuale["race_id"] = dove        # la copia locale segue le scritture
-        ordine.append((p, dove, tempo))
+        posto.pop((int(attuale["race_id"]), int(attuale["athlete_id"])), None)
+        posto[(gara, atleta)] = p["entry_id"]
+        attuale["race_id"] = gara        # la copia locale segue le scritture
+        attuale["athlete_id"] = atleta
+        ordine.append((p, gara, atleta, tempo))
 
     while rimasti:
         pronti = [p for p in rimasti.values() if _libera(p)]
         if pronti:
             for p in pronti:
-                _sposta(p, p["race_id"], p["tempo"])
+                _sposta(p, p["race_id"], p["athlete_id"], p["tempo"])
                 rimasti.pop(p["entry_id"])
             continue
 
@@ -1256,6 +1480,10 @@ def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
         # spostamenti in sospeso deve arrivare. Al giro dopo la catena si
         # scioglie da sola, e la riga parcheggiata arriva a destinazione
         # come tutte le altre: resta in `rimasti` apposta.
+        #
+        # Al parcheggio la riga ci va gia' intestata all'atleta di arrivo:
+        # e' quella la coppia che deve risultare libera, perche' e' quella
+        # che l'indice unico guarda dopo la prima scrittura.
         mete = {q["race_id"] for q in rimasti.values()}
         scelto = parcheggio = None
         for p in rimasti.values():
@@ -1271,28 +1499,18 @@ def _ordina_spostamenti(da_scrivere: list[dict], stato: dict[int, dict],
         if scelto is None:
             nomi = sorted({q["chi"] for q in rimasti.values()})
             return [], (
-                f"Lo scambio di gare per {', '.join(nomi)} non si puo' fare "
-                "in un colpo solo: non c'e' una gara libera da cui passare. "
+                f"Lo scambio per {', '.join(nomi)} non si puo' fare in un "
+                "colpo solo: non c'e' una gara libera da cui passare. "
                 "Sposta prima una delle due iscrizioni su un'altra gara e "
-                "salva, poi fai il resto.")
+                "salva, poi fai il resto; oppure togli una delle due righe, "
+                "salva, e rimettila dopo.")
         # Al parcheggio ci si va con il tempo che la riga ha gia': quello
         # buono lo scrive il passaggio finale.
-        _sposta(scelto, parcheggio, stato[scelto["entry_id"]]["entry_time"])
+        _sposta(scelto, parcheggio, scelto["athlete_id"],
+                stato[scelto["entry_id"]]["entry_time"])
         gia_parcheggiate.add(scelto["entry_id"])
 
     return ordine, None
-
-
-def _intero(v) -> int | None:
-    try:
-        if v is None or pd.isna(v):
-            return None
-    except (TypeError, ValueError):
-        pass
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return None
 
 
 @st.cache_data(ttl=60, show_spinner=False)
