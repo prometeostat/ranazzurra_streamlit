@@ -3,6 +3,8 @@ views/_common.py — pezzi di interfaccia condivisi fra le pagine.
 """
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -10,6 +12,33 @@ import auth
 import data
 import season as season_mod
 from theme import fmt_int
+
+
+# ══════════════════════════════════════════════════════════════════
+# Manifestazioni
+# ══════════════════════════════════════════════════════════════════
+
+def nome_collegato(riga, nome: str | None = None) -> str:
+    """
+    Il nome di una manifestazione, cliccabile quando c'e' dove mandare.
+
+    Porta al sito della manifestazione e, in mancanza di quello, al
+    programma PDF. Senza nessuno dei due resta testo e basta, invece di un
+    link che non va da nessuna parte: i campi sono nullable e su parecchie
+    manifestazioni sono vuoti tutti e due.
+
+    Sta qui e non dentro la pagina dell'Agenda perche' quella e' uno
+    script che gira tutto all'import, e una regola che non si puo'
+    importare non si puo' nemmeno provare.
+    """
+    testo = html.escape(str(nome if nome is not None
+                            else (riga.get("nome") or "Manifestazione")))
+    for campo in ("website_link", "pdf_link"):
+        url = str(riga.get(campo) or "").strip()
+        if url.lower().startswith("http"):
+            return (f'<a href="{html.escape(url, quote=True)}" '
+                    f'target="_blank" rel="noopener">{testo} ↗</a>')
+    return testo
 
 
 # ══════════════════════════════════════════════════════════════════

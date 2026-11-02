@@ -723,6 +723,16 @@ div[class*="st-key-riga_"] div[data-testid="stColumn"]:last-child {
 .isc-mini.fatta .isc-mini-lbl,
 .isc-mini.fatta .isc-mini-data { color:var(--teal); }
 
+/* Il nome della manifestazione porta al suo sito, o al programma PDF se
+   il sito non c'e'. Il colore resta quello del titolo e non il blu di
+   default del browser, che dentro una fascia oro stonerebbe: a dire che
+   si clicca bastano la sottolineatura sottile e la freccia. */
+.isc-scadenza-gara a, .isc-mini-gara a {
+    color:inherit; text-decoration:none;
+    border-bottom:1px solid currentColor; padding-bottom:1px;
+}
+.isc-scadenza-gara a:hover, .isc-mini-gara a:hover { opacity:0.75; }
+
 /* Riga e bottone affiancati anche sul telefono: sotto i 640px Streamlit
    impila le colonne, e "Vai" finirebbe su una riga sua raddoppiando
    l'altezza. Stesso rimedio del calcolatore e della barra in basso.

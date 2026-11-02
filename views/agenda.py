@@ -17,8 +17,8 @@ import auth
 import crud
 import data
 import season as season_mod
-from views._common import (apply_fin, inline_filters, page_header,
-                           season_year)
+from views._common import (apply_fin, inline_filters, nome_collegato,
+                           page_header, season_year)
 
 OGGI = _dt.date.today()
 
@@ -98,7 +98,7 @@ def _fascia_grande(s: dict) -> None:
     t = _testi(s)
     st.html(
         f'<div class="isc-scadenza {t["stile"]}">'
-        f'<span class="isc-scadenza-gara">{html.escape(str(s["nome"]))}'
+        f'<span class="isc-scadenza-gara">{nome_collegato(s)}'
         f'<span class="isc-scadenza-quando">'
         f'{html.escape(t["giorno_gara"])}</span>'
         f'</span>'
@@ -124,7 +124,7 @@ def _riga_mini(s: dict) -> None:
         riga, azione = st.columns([7, 2])
         riga.html(
             f'<div class="isc-mini {t["stile"]}">'
-            f'<span class="isc-mini-gara">{html.escape(str(s["nome"]))}'
+            f'<span class="isc-mini-gara">{nome_collegato(s)}'
             f'<span class="isc-mini-quando">'
             f'{html.escape(t["giorno_gara"])}</span></span>'
             f'<span><span class="isc-mini-lbl">'

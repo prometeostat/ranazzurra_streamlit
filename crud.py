@@ -1889,6 +1889,12 @@ def solleciti(athlete_id: int | None, oggi: _dt.date | None = None,
         fuori.append({
             "comp_id": comp_id,
             "nome": str(r.get("nome") or "Manifestazione"),
+            # I due link viaggiano con la voce perche' in fascia il nome
+            # della manifestazione e' cliccabile, come sulla scheda
+            # dell'agenda. Stessi nomi di campo della query e della scheda:
+            # un vocabolario solo, se no la stessa cosa finisce con due nomi.
+            "website_link": str(r.get("website_link") or "").strip() or None,
+            "pdf_link": str(r.get("pdf_link") or "").strip() or None,
             "start_date": _data_pura(r.get("start_date")),
             "apertura": apertura,
             "sollecito": sollecito,
