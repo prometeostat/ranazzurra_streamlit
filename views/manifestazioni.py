@@ -227,6 +227,22 @@ def _form(gara: dict | None) -> None:
                  "sociali: i loro tempi restano a database ma si possono "
                  "escludere dai filtri di schede, classifiche e confronti.")
 
+        # Senza la colonna a database il campo si spegne invece di
+        # promettere un salvataggio che fallirebbe: e' la finestra fra il
+        # push e la migrazione, e dura quanto ci mette l'ALTER TABLE.
+        senza_colonna = crud.manca_colonna_federnuoto()
+        id_fin = st.text_input(
+            "ID FederNuoto",
+            value="" if nuovo else (gara.get("id_federnuoto") or ""),
+            max_chars=crud.MAX_ID_FEDERNUOTO, placeholder="es. 150103",
+            disabled=bool(senza_colonna),
+            help="Il codice con cui la FIN identifica questa manifestazione "
+                 "sul portale federale. Si puo' lasciare vuoto, ma senza "
+                 "l'Excel delle iscrizioni esce con la prima colonna in "
+                 "bianco e il portale non lo accetta.")
+        if senza_colonna:
+            st.caption(senza_colonna)
+
         b1, b2 = st.columns(2)
         salva = b1.form_submit_button("Salva", type="primary", use_container_width=True)
         annulla = b2.form_submit_button("Annulla", use_container_width=True)
@@ -243,6 +259,7 @@ def _form(gara: dict | None) -> None:
         "website_link": sito, "pdf_link": pdf,
         "max_races": int(max_gare) or None,
         "is_fin": bool(ufficiale),
+        "id_federnuoto": id_fin,
         "organizer_company_id": organizzatore or None,
     }
     errori = crud.valida_manifestazione(dati)
@@ -373,6 +390,18 @@ def _form_clona(elenco: pd.DataFrame) -> None:
             help="Arriva dall'edizione di partenza: si cambia solo se la "
                  "nuova edizione cambia calendario.")
 
+        # L'ID FederNuoto non si clona: ogni edizione ha il suo, e copiarlo
+        # vorrebbe dire mandare le iscrizioni dell'anno nuovo sulla
+        # manifestazione dell'anno prima.
+        senza_colonna = crud.manca_colonna_federnuoto()
+        id_fin = st.text_input(
+            "ID FederNuoto", value="", max_chars=crud.MAX_ID_FEDERNUOTO,
+            placeholder="es. 150103", disabled=bool(senza_colonna),
+            help="Non viene copiato dall'edizione di partenza: ogni "
+                 "edizione ha il suo codice sul portale federale.")
+        if senza_colonna:
+            st.caption(senza_colonna)
+
         st.markdown("**Programma gare**")
         modificate = st.data_editor(
             righe_gare, key=f"man_clona_gare_{int(src)}", hide_index=True,
@@ -408,6 +437,7 @@ def _form_clona(elenco: pd.DataFrame) -> None:
         "website_link": sito, "pdf_link": pdf,
         "max_races": int(max_gare) or None,
         "is_fin": bool(ufficiale),
+        "id_federnuoto": id_fin,
         "organizer_company_id": organizzatore or None,
     }
     errori = crud.valida_manifestazione(dati)
@@ -784,6 +814,9 @@ tabella = pd.DataFrame({
     "Cronometraggio": vista["timing"],
     "Gare": vista["n_gare"].astype("Int64"),
     "FIN": vista["is_fin"].astype(bool),
+    # Si vede a colpo d'occhio a chi manca il codice: senza, l'Excel delle
+    # iscrizioni esce con la prima colonna in bianco.
+    "ID FIN": vista["id_federnuoto"].fillna("—").replace("", "—"),
     "Attiva": ~vista["is_deleted"].astype(bool),
 })
 st.dataframe(
@@ -792,6 +825,10 @@ st.dataframe(
         "FIN": st.column_config.CheckboxColumn(
             "FIN", disabled=True,
             help="Manifestazione ufficiale del calendario federale."),
+        "ID FIN": st.column_config.TextColumn(
+            "ID FIN", disabled=True, width="small",
+            help="Codice della manifestazione sul portale federale. Serve "
+                 "all'Excel delle iscrizioni."),
         "Attiva": st.column_config.CheckboxColumn("Attiva", disabled=True),
         "Inizio": st.column_config.DateColumn("Inizio", format="DD/MM/YYYY"),
         "Fine": st.column_config.DateColumn("Fine", format="DD/MM/YYYY"),
