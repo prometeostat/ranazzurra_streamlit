@@ -32,28 +32,13 @@ ORIZZONTE = 75
 page_header("Agenda", "Calendario manifestazioni")
 
 
-def fascia_pre_iscrizione() -> None:
+def _testi(s: dict) -> dict:
     """
-    La scadenza della prossima pre-iscrizione, in cima a tutto.
+    Le parole di una scadenza, calcolate una volta sola.
 
-    Non e' il limite tecnico delle iscrizioni, che e' il giorno prima della
-    chiusura ufficiale: e' il giorno prima dell'**apertura**, quando gli
-    allenatori devono avere le adesioni in mano per portarle sul portale
-    federale. Chi arriva dopo puo' ancora pre-iscriversi dall'app, ma
-    rischia che l'iscrizione vera sia gia' partita, ed e' per questo che la
-    fascia dice tutte e due le date invece di una sola.
-
-    Sta prima dei filtri e prima di qualunque `st.stop()` della pagina:
-    deve vedersi sempre, anche quando il periodo scelto non ha niente
-    dentro.
+    Le usano tutte e due le rese, la fascia grande e la riga compatta: se
+    stessero scritte due volte, prima o poi direbbero due cose diverse.
     """
-    io = auth.current_user() or {}
-    if io.get("athlete_id") is None:
-        return
-    s = crud.prossimo_sollecito(int(io["athlete_id"]))
-    if not s:
-        return
-
     quando = (s["sollecito"].strftime("%d/%m/%Y") if s["sollecito"] else "—")
     ultimo = (s["ultimo_giorno"].strftime("%d/%m/%Y")
               if s["ultimo_giorno"] else None)
@@ -94,22 +79,95 @@ def fascia_pre_iscrizione() -> None:
             sotto = (f'Dopo puoi ancora cambiare qui fino al {ultimo}.'
                      if ultimo else "")
 
-    st.html(
-        f'<div class="isc-scadenza {stile}">'
-        f'<span class="isc-scadenza-gara">{html.escape(str(s["nome"]))}'
-        f'<span class="isc-scadenza-quando">{html.escape(giorno_gara)}</span>'
-        f'</span>'
-        f'<span class="isc-scadenza-lbl">{html.escape(etichetta)}</span>'
-        f'<span class="isc-scadenza-data">{quando}</span>'
-        f'<span class="isc-scadenza-coda">{html.escape(coda)}</span></div>')
-    if sotto:
-        st.caption(sotto)
+    return {"stile": stile, "etichetta": etichetta, "quando": quando,
+            "coda": coda, "sotto": sotto, "giorno_gara": giorno_gara}
 
-    if not auth.sola_lettura():
-        if st.button("📝  Vai alla pre-iscrizione", type="primary",
-                     use_container_width=True, key="sollecito_vai"):
-            st.session_state["isc_comp"] = s["comp_id"]
-            st.switch_page("views/iscrizioni_nuove.py")
+
+def _vai(s: dict, etichetta: str, tipo: str) -> None:
+    """Il bottone che porta alla pre-iscrizione di quella manifestazione."""
+    if auth.sola_lettura():
+        return
+    if st.button(etichetta, type=tipo, use_container_width=True,
+                 key=f'sollecito_vai_{s["comp_id"]}'):
+        st.session_state["isc_comp"] = s["comp_id"]
+        st.switch_page("views/iscrizioni_nuove.py")
+
+
+def _fascia_grande(s: dict) -> None:
+    """La scadenza piu' urgente, per esteso."""
+    t = _testi(s)
+    st.html(
+        f'<div class="isc-scadenza {t["stile"]}">'
+        f'<span class="isc-scadenza-gara">{html.escape(str(s["nome"]))}'
+        f'<span class="isc-scadenza-quando">'
+        f'{html.escape(t["giorno_gara"])}</span>'
+        f'</span>'
+        f'<span class="isc-scadenza-lbl">{html.escape(t["etichetta"])}</span>'
+        f'<span class="isc-scadenza-data">{t["quando"]}</span>'
+        f'<span class="isc-scadenza-coda">{html.escape(t["coda"])}</span>'
+        '</div>')
+    if t["sotto"]:
+        st.caption(t["sotto"])
+    _vai(s, "📝  Vai alla pre-iscrizione", "primary")
+
+
+def _riga_mini(s: dict) -> None:
+    """
+    Una delle altre scadenze aperte, in una riga bassa.
+
+    Stesso codice colore della fascia grande e le stesse parole, ma senza
+    la riga di spiegazione sotto: ripetuta tre volte allungherebbe una
+    pagina che sul telefono deve arrivare al calendario.
+    """
+    t = _testi(s)
+    with st.container(key=f'sollecito_mini_{s["comp_id"]}'):
+        riga, azione = st.columns([7, 2])
+        riga.html(
+            f'<div class="isc-mini {t["stile"]}">'
+            f'<span class="isc-mini-gara">{html.escape(str(s["nome"]))}'
+            f'<span class="isc-mini-quando">'
+            f'{html.escape(t["giorno_gara"])}</span></span>'
+            f'<span><span class="isc-mini-lbl">'
+            f'{html.escape(t["etichetta"])}</span> '
+            f'<span class="isc-mini-data">{t["quando"]}</span> '
+            f'<span class="isc-mini-coda">· {html.escape(t["coda"])}</span>'
+            '</span></div>')
+        with azione:
+            _vai(s, "Vai", "secondary")
+
+
+def fascia_pre_iscrizione() -> None:
+    """
+    Le scadenze delle pre-iscrizioni aperte, in cima a tutto.
+
+    Non e' il limite tecnico delle iscrizioni, che e' il giorno prima della
+    chiusura ufficiale: e' il giorno prima dell'**apertura**, quando gli
+    allenatori devono avere le adesioni in mano per portarle sul portale
+    federale. Chi arriva dopo puo' ancora pre-iscriversi dall'app, ma
+    rischia che l'iscrizione vera sia gia' partita, ed e' per questo che la
+    fascia dice tutte e due le date invece di una sola.
+
+    Ne compaiono fino a `crud.MAX_SOLLECITI`: a stagione piena le
+    manifestazioni aperte insieme sono piu' d'una, e sono decisioni
+    diverse. L'ordine lo decide `crud.solleciti()`, prima quelle che
+    chiedono una risposta e poi come promemoria quelle gia' fatte e quelle
+    scadute. La prima si prende la fascia grande, le altre una riga bassa a
+    testa.
+
+    Sta prima dei filtri e prima di qualunque `st.stop()` della pagina:
+    deve vedersi sempre, anche quando il periodo scelto non ha niente
+    dentro.
+    """
+    io = auth.current_user() or {}
+    if io.get("athlete_id") is None:
+        return
+    elenco = crud.solleciti(int(io["athlete_id"]))
+    if not elenco:
+        return
+
+    _fascia_grande(elenco[0])
+    for s in elenco[1:]:
+        _riga_mini(s)
 
 
 fascia_pre_iscrizione()

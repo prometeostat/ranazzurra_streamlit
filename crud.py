@@ -1824,48 +1824,91 @@ def togli_preferito(athlete_id: int, preferito_id: int) -> bool:
 
 GIORNI_SOLLECITO_ROSSO = 3   # da qui in giù la fascia diventa rossa
 
+# Quante scadenze far vedere in cima all'Agenda. A stagione piena capita di
+# averne tre aperte insieme, e sono tre decisioni diverse da prendere; oltre
+# la terza si smette, se no la pagina diventa una colonna di avvisi e il
+# calendario finisce sotto l'orizzonte del telefono.
+MAX_SOLLECITI = 3
 
-def prossimo_sollecito(athlete_id: int | None,
-                       oggi: _dt.date | None = None) -> dict | None:
+
+def _conta_mie(athlete_id: int | None) -> dict[int, int]:
+    """comp_id -> quante gare ho già scelto lì dentro."""
+    if athlete_id is None:
+        return {}
+    righe = mie_iscrizioni(int(athlete_id))
+    if righe.empty or "comp_id" not in righe.columns:
+        return {}
+    righe = righe[righe["comp_id"].notna()]
+    if righe.empty:
+        return {}
+    return {int(k): int(v)
+            for k, v in righe.groupby("comp_id").size().items()}
+
+
+def solleciti(athlete_id: int | None, oggi: _dt.date | None = None,
+              quanti: int = MAX_SOLLECITI) -> list[dict]:
     """
-    La pre-iscrizione più urgente da fare, o None se non ce n'è nessuna.
+    Le pre-iscrizioni aperte oggi, dalla più urgente. Lista vuota se non
+    ce n'è nessuna.
 
-    Si prende la manifestazione più vicina fra quelle su cui oggi si può
-    ancora scrivere: l'elenco arriva già filtrato e ordinato per data da
-    `manifestazioni_iscrivibili()`, quindi è la prima.
+    **L'ordine lo decide la scadenza della pre-iscrizione, non la data
+    della gara.** Le due cose non vanno sempre nello stesso verso: una gara
+    più lontana può aprire le iscrizioni prima, e ordinando per data della
+    gara finirebbe in cima quella che non si può più fare, nascondendo
+    quella che scade domani. In fascia si legge la scadenza, quindi è la
+    scadenza che deve dare l'ordine.
 
-    Torna anche quante gare l'atleta ha già scelto lì dentro, perché a chi
-    si è già pre-iscritto non si fa la predica: gli si dice solo fino a
-    quando può cambiare idea.
+    In fondo vanno quelle su cui non c'è più niente da decidere: dove le
+    gare le ho già date (resta solo da sapere fino a quando posso
+    cambiarle) e dove la scadenza è passata (si può ancora scrivere fino al
+    limite tecnico, ma l'iscrizione vera può essere già partita). Restano a
+    video come promemoria, sotto a quelle che chiedono una risposta.
+
+    Ogni voce porta anche quante gare l'atleta ha già scelto lì dentro,
+    perché a chi si è già pre-iscritto non si fa la predica: gli si dice
+    solo fino a quando può cambiare idea.
     """
     aperte = manifestazioni_iscrivibili()
     if aperte.empty:
-        return None
-
-    r = aperte.iloc[0].to_dict()
-    apertura = _data_pura(r.get("apertura"))
-    if apertura is None:
-        return None
+        return []
 
     oggi = oggi or _dt.date.today()
-    sollecito = giorno_sollecito(apertura)
-    ultimo = _data_pura(r.get("ultimo_giorno")) or ultimo_giorno_utile(
-        r.get("chiusura"))
+    mie_per_manif = _conta_mie(athlete_id)
 
-    mie = 0
-    if athlete_id is not None:
-        righe = mie_iscrizioni(int(athlete_id))
-        if not righe.empty:
-            mie = int((righe["comp_id"] == int(r["comp_id"])).sum())
+    fuori: list[dict] = []
+    for r in aperte.to_dict("records"):
+        apertura = _data_pura(r.get("apertura"))
+        if apertura is None:
+            continue          # senza apertura non si inventa una scadenza
+        comp_id = _intero(r.get("comp_id"))
+        if comp_id is None:
+            continue
+        sollecito = giorno_sollecito(apertura)
+        mie = mie_per_manif.get(comp_id, 0)
+        scaduto = oggi > sollecito
+        fuori.append({
+            "comp_id": comp_id,
+            "nome": str(r.get("nome") or "Manifestazione"),
+            "start_date": _data_pura(r.get("start_date")),
+            "apertura": apertura,
+            "sollecito": sollecito,
+            "ultimo_giorno": (_data_pura(r.get("ultimo_giorno"))
+                              or ultimo_giorno_utile(r.get("chiusura"))),
+            "giorni": (sollecito - oggi).days,
+            "scaduto": scaduto,
+            "mie_gare": mie,
+            # Chiede una risposta: le gare non le ho date e sono ancora in
+            # tempo. E' questo che porta la voce in cima.
+            "da_fare": not (mie or scaduto),
+        })
 
-    return {
-        "comp_id": int(r["comp_id"]),
-        "nome": str(r.get("nome") or "Manifestazione"),
-        "start_date": _data_pura(r.get("start_date")),
-        "apertura": apertura,
-        "sollecito": sollecito,
-        "ultimo_giorno": ultimo,
-        "giorni": (sollecito - oggi).days,
-        "scaduto": oggi > sollecito,
-        "mie_gare": mie,
-    }
+    fuori.sort(key=lambda s: (0 if s["da_fare"] else 1, s["sollecito"],
+                              s["start_date"] or _dt.date.max))
+    return fuori[:quanti] if quanti else fuori
+
+
+def prossimo_sollecito(athlete_id: int | None,
+                       oggi: _dt.date | None = None) -> dict | None:
+    """La pre-iscrizione più urgente, o None se non ce n'è nessuna."""
+    tutti = solleciti(athlete_id, oggi=oggi, quanti=1)
+    return tutti[0] if tutti else None

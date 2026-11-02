@@ -694,6 +694,62 @@ div[class*="st-key-riga_"] div[data-testid="stColumn"]:last-child {
 .isc-scadenza.fatta .isc-scadenza-lbl,
 .isc-scadenza.fatta .isc-scadenza-data { color:var(--teal); }
 
+/* ── Le altre pre-iscrizioni aperte, in righe basse ──
+   In Agenda la piu' urgente si prende la fascia grande qui sopra; le altre
+   stanno in righe compatte con lo stesso codice colore. A stagione piena
+   le manifestazioni aperte insieme sono tre, e tre fasce alte di fila
+   riempirebbero lo schermo del telefono prima del calendario. */
+.isc-mini {
+    display:flex; flex-direction:column; gap:1px;
+    background:var(--glass); border:1px solid var(--border);
+    border-left:4px solid var(--gold);
+    border-radius:10px; padding:7px 12px;
+}
+.isc-mini-gara { font-family:'Bebas Neue',sans-serif; font-size:16px;
+                 letter-spacing:1px; line-height:1.2; color:var(--white); }
+.isc-mini-quando { font-family:'Barlow Condensed',sans-serif; font-size:11px;
+                   letter-spacing:1px; color:var(--muted); }
+.isc-mini-lbl { font-family:'Barlow Condensed',sans-serif; font-size:11px;
+                letter-spacing:1.5px; text-transform:uppercase;
+                color:var(--gold); }
+.isc-mini-data { font-family:'Bebas Neue',sans-serif; font-size:16px;
+                 letter-spacing:1px; color:var(--gold); }
+.isc-mini-coda { font-family:'Barlow Condensed',sans-serif; font-size:12px;
+                 color:var(--muted); }
+.isc-mini.urgente { border-left-color:var(--red); }
+.isc-mini.urgente .isc-mini-lbl,
+.isc-mini.urgente .isc-mini-data { color:var(--red); }
+.isc-mini.fatta { border-left-color:var(--teal); }
+.isc-mini.fatta .isc-mini-lbl,
+.isc-mini.fatta .isc-mini-data { color:var(--teal); }
+
+/* Riga e bottone affiancati anche sul telefono: sotto i 640px Streamlit
+   impila le colonne, e "Vai" finirebbe su una riga sua raddoppiando
+   l'altezza. Stesso rimedio del calcolatore e della barra in basso.
+   Il bottone sta in una colonna di larghezza fissa e il testo si prende
+   tutto il resto: senza bloccarla, sul telefono Streamlit da' a tutte e
+   due le colonne flex-basis 100% e quelle si dividono lo spazio a meta',
+   cioe' un "Vai" largo come la riga e il nome della gara su quattro
+   righe. Misurato in anteprima, non immaginato. */
+div[class*="st-key-sollecito_mini"] { margin-bottom:8px; }
+div[class*="st-key-sollecito_mini"] div[data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important; gap: 8px !important;
+    align-items: center !important;
+}
+div[class*="st-key-sollecito_mini"] div[data-testid="stColumn"] {
+    width: auto !important; min-width: 0 !important;
+}
+div[class*="st-key-sollecito_mini"]
+    div[data-testid="stColumn"]:last-child {
+    flex: 0 0 76px !important; width: 76px !important;
+}
+div[class*="st-key-sollecito_mini"] button {
+    min-height: 40px !important; padding: 2px 8px !important;
+    font-family: 'Barlow Condensed', sans-serif !important;
+    font-size: 14px !important; letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
 .isc-gara { font-family:'Barlow Condensed',sans-serif; font-size:16px;
             font-weight:600; color:var(--white); line-height:1.15; }
 .isc-sotto { font-family:'Barlow Condensed',sans-serif; font-size:12px;
