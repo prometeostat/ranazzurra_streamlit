@@ -23,6 +23,17 @@ from queries import (
 
 TTL = 3600
 
+# L'Agenda e' l'eccezione, e il motivo vale la riga in piu'. Tutto il resto
+# qui dentro e' storico: un risultato del 2019 fra un'ora e' uguale a
+# adesso, e un'ora di cache non si vede. Il calendario no: e' l'unica
+# pagina che dice cosa c'e' da fare adesso, e lo staff lo cambia mentre la
+# gente la guarda. Con un'ora di cache una manifestazione tolta dal
+# calendario resta a video per un'ora, e il bottone Iscriviti continua a
+# portarci dentro. Peggio ancora se la riga is_deleted la si scrive
+# direttamente a database: li' non passa da `crud`, quindi nessuno svuota
+# le cache e l'unica cosa che la fa sparire e' lo scadere del TTL.
+TTL_AGENDA = 60
+
 
 def _num(df: pd.DataFrame, cols) -> pd.DataFrame:
     for c in cols:
@@ -264,9 +275,15 @@ def load_competition_results(comp_id: int) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=TTL, show_spinner=False)
+@st.cache_data(ttl=TTL_AGENDA, show_spinner=False)
 def load_agenda(season_year: int) -> pd.DataFrame:
-    """Manifestazioni del periodo, con quante gare e atleti nostri c'erano."""
+    """Manifestazioni del periodo, con quante gare e atleti nostri c'erano.
+
+    TTL corto, non quello di tutti gli altri: vedi TTL_AGENDA in cima.
+    Le manifestazioni disattivate non ci sono gia' a monte, se le toglie
+    la WHERE di AGENDA_SQL; quello che si accorcia qui e' il tempo in cui
+    una riga appena tolta resta a video.
+    """
     start, end = season_mod.bounds(season_year)
     df = query_df(AGENDA_SQL, (start, end))
     return _num(df, ("comp_id", "nostre_gare", "nostri_atleti"))

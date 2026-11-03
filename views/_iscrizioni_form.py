@@ -86,6 +86,41 @@ def _elenco_mie(athlete_id: int) -> dict[int, dict]:
     } for r in teste.to_dict("records")}
 
 
+FUORI_ELENCO = (
+    "La manifestazione da cui arrivi non è aperta alle iscrizioni: o è "
+    "stata tolta dal calendario, oppure il termine è passato. Qui sotto ci "
+    "sono quelle su cui puoi ancora scrivere.")
+
+
+def _manifestazione_di_arrivo(pre, disponibili) -> tuple[int | None,
+                                                         str | None]:
+    """
+    Quale manifestazione aprire quando si arriva da un bottone, e cosa
+    dire quando non si puo'.
+
+    `pre` e' l'id che l'Agenda o la fascia delle scadenze hanno lasciato in
+    sessione; `disponibili` sono quelle su cui si puo' scrivere adesso.
+
+    Prima, se `pre` non era fra le disponibili, si apriva in silenzio la
+    prima della lista: chi aveva cliccato Iscriviti su una gara si
+    ritrovava davanti il modulo di un'altra senza accorgersene, e poteva
+    iscriversi alla manifestazione sbagliata. Non e' un caso di scuola,
+    l'elenco dell'Agenda e' cachato: puo' proporre una manifestazione che
+    intanto e' stata tolta dal calendario o a cui e' scaduto il termine.
+
+    Torna (id da selezionare o None, avviso da mostrare o None).
+    """
+    try:
+        pre = None if pre is None else int(pre)
+    except (TypeError, ValueError):
+        return None, None          # non e' un id: si fa finta di niente
+    if pre is None:
+        return None, None
+    if pre in disponibili:
+        return pre, None
+    return None, FUORI_ELENCO
+
+
 def _scheda_manifestazione(riga: dict, massimo: int | None) -> None:
     """La testata con data, nome e due righe di contesto."""
     meta = []
@@ -213,6 +248,12 @@ def disegna(modo: str = "nuova") -> None:
     # ══════════════════════════════════════════════════════════════
     ELENCO = _elenco_mie(mio_id) if modo == "modifica" else _elenco_aperte()
 
+    # Da dove si arriva: l'Agenda e la fascia delle scadenze mettono qui la
+    # manifestazione su cui si e' cliccato. Si legge subito, anche quando
+    # non c'e' niente di aperto, se no resta in sessione e salta fuori al
+    # prossimo giro su una pagina che non c'entra.
+    pre = st.session_state.pop("isc_comp", None)
+
     if not ELENCO:
         if modo == "modifica":
             st.info("Non hai iscrizioni da cambiare su manifestazioni ancora "
@@ -230,9 +271,11 @@ def disegna(modo: str = "nuova") -> None:
 
     opzioni = list(ELENCO)
 
-    pre = st.session_state.pop("isc_comp", None)
-    if pre is not None and int(pre) in ELENCO:
-        st.session_state["isc_sel"] = int(pre)
+    scelta, avviso = _manifestazione_di_arrivo(pre, ELENCO)
+    if scelta is not None:
+        st.session_state["isc_sel"] = scelta
+    if avviso:
+        st.warning(avviso, icon="⚠️")
     if st.session_state.get("isc_sel") not in opzioni:
         st.session_state["isc_sel"] = opzioni[0]
 
