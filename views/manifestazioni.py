@@ -2,9 +2,13 @@
 views/manifestazioni.py — Anagrafica manifestazioni, riservata all'admin.
 
 Stesso schema dell'anagrafica atleti: elenco con filtro di stato, form di
-inserimento e modifica, disattivazione morbida. "Elimina" non cancella la
-riga, mette is_deleted = TRUE: alle manifestazioni sono appese le gare e i
-risultati di tutti.
+inserimento e modifica, disattivazione morbida. Il bottone si chiama
+**Disattiva** perche' e' quello che fa: mette is_deleted = TRUE e la
+manifestazione sparisce da agenda, schede e classifiche, ma la riga resta
+e con Riattiva torna com'era. Si chiamava "Elimina", e nessuno lo
+riconosceva come l'interruttore che e': il nome prometteva una
+cancellazione che non avviene, e alle manifestazioni sono appese le gare e
+i risultati di tutti.
 
 Serve soprattutto per il futuro: lo scraper porta a database solo le
 manifestazioni gia' nuotate, quindi le prossime si inseriscono qui e da qui
@@ -840,7 +844,7 @@ st.dataframe(
 st.markdown('<div class="section-title">Azioni</div>', unsafe_allow_html=True)
 ids = vista["comp_id"].astype(int).tolist()
 etichette = {int(r["comp_id"]): _etichetta(r) for _, r in vista.iterrows()}
-c_sel, c_mod, c_del = st.columns([4, 1.2, 1.4], vertical_alignment="bottom")
+c_sel, c_mod, c_del = st.columns([4, 1.2, 1.6], vertical_alignment="bottom")
 scelta = c_sel.selectbox("Manifestazione", options=ids, key="man_sel",
                          format_func=lambda i: etichette.get(i, str(i)))
 riga = manif[manif["comp_id"] == scelta].iloc[0]
@@ -857,7 +861,7 @@ if disattivata:
         st.session_state["man_msg"] = f"{riga['nome']} e' di nuovo attiva."
         st.rerun()
 else:
-    if c_del.button("Elimina", use_container_width=True):
+    if c_del.button("Disattiva", use_container_width=True):
         st.session_state["man_conferma"] = int(scelta)
         st.rerun()
 
@@ -869,14 +873,18 @@ if st.session_state.get("man_conferma") is not None:
     else:
         r = r.iloc[0]
         gare = int(r["n_gare"]) if pd.notna(r["n_gare"]) else 0
+        # La conferma resta anche se l'azione si disfa con un clic: una
+        # manifestazione spenta per sbaglio si porta via le sue gare da
+        # agenda, schede e classifiche di tutti, e il numero qui sotto fa
+        # vedere quanto pesa prima di premere.
         st.warning(
-            f"Confermi l'eliminazione di **{r['nome']}**?  \n"
-            f"Viene messa a non attiva, non cancellata: le {gare} gare collegate "
-            "restano a database, ma spariscono da agenda, schede e classifiche "
-            "finche' non la riattivi."
+            f"Disattivo **{r['nome']}**?  \n"
+            f"Le {gare} gare collegate restano a database ma spariscono da "
+            "agenda, schede e classifiche finché non la riattivi da qui."
         )
         c_ok, c_no = st.columns(2)
-        if c_ok.button("Sì, elimina", type="primary", use_container_width=True):
+        if c_ok.button("Sì, disattiva", type="primary",
+                       use_container_width=True):
             crud.disattiva_manifestazione(cid)
             st.session_state["man_conferma"] = None
             st.session_state["man_msg"] = f"{r['nome']} e' ora disattivata."
