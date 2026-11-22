@@ -14,8 +14,8 @@ import streamlit as st
 import season as season_mod
 from db import query_df
 from queries import (
-    ACCESS_LOG_SQL, ACCESS_LOG_STATS_SQL, COMPETITION_RESULTS_SQL,
-    AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
+    ACCESS_LOG_SQL, ACCESS_LOG_STATS_SQL, COMPETITION_HISTORY_SQL,
+    COMPETITION_RESULTS_SQL, AGENDA_SQL, ALLTIME_PB_SQL, ALL_ATHLETES_SQL, ATHLETES_SQL, CLUB_RANKING_SQL, COMPARE_PB_SQL,
     FIN_LEADERBOARD_SQL, FREQUENCY_SQL, PB_SQL, RACES_SQL, RANKING_SQL,
     SEASONS_SQL, SEASON_META_SQL, SPLITS_BY_EVENT_SQL, SPLITS_SQL, TREND_SQL,
     ATHLETE_CERTIFICATE_SQL, con_fin,
@@ -273,6 +273,123 @@ def load_competition_results(comp_id: int) -> pd.DataFrame:
     if "race_date" in df.columns:
         df["race_date"] = pd.to_datetime(df["race_date"], errors="coerce")
     return df
+
+
+# ══════════════════════════════════════════════════════════════════
+# Personali, migliori recenti e primi tempi
+# ══════════════════════════════════════════════════════════════════
+# Di ogni tempo di una manifestazione si dice se e' il primo in quella gara
+# e vasca, un personale o il migliore delle ultime stagioni. Una cosa sola
+# per tempo, la piu' forte: un primo tempo e' per forza anche un personale,
+# e un personale e' per forza il migliore delle ultime stagioni, quindi
+# segnarle tutte sarebbe rumore.
+
+PRIMO, PB, RECENTE = "primo", "pb", "recente"
+
+# Quante stagioni fanno il "recente": quella della manifestazione e le due
+# prima. Si contano stagioni e non mesi, vedi season.inizio_stagioni().
+STAGIONI_RECENTI = 3
+
+
+def _centesimi(secondi) -> int | None:
+    """Secondi in centesimi interi, o None.
+
+    I confronti si fanno sugli interi e non sui float: un tempo e' fatto di
+    centesimi, e due 60.72 arrivati per strade diverse dal database possono
+    non essere lo stesso float. E' la stessa scelta del calcolatore.
+    """
+    if secondi is None:
+        return None
+    try:
+        if pd.isna(secondi):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return int(round(float(secondi) * 100))
+
+
+def _conta(n) -> int:
+    """Un conteggio, con None e NaN che valgono zero.
+
+    A database COUNT() non torna mai un nullo, ma un NaN e' "vero" per
+    Python (`nan or 0` da' nan) e int(nan) solleva: meglio non dipendere da
+    come arriva il numero.
+    """
+    try:
+        return 0 if n is None or pd.isna(n) else int(n)
+    except (TypeError, ValueError):
+        return 0
+
+
+def esito_tempo(tempo, best_prima, n_prima, best_recente,
+                n_recente) -> str | None:
+    """
+    Che cosa e' un tempo rispetto allo storico dell'atleta in quella gara e
+    vasca: PRIMO, PB, RECENTE o None.
+
+    `best_prima` e `n_prima` sono il miglior tempo e quanti tempi c'erano in
+    tutte le manifestazioni precedenti; `best_recente` e `n_recente` lo
+    stesso, ma solo nelle ultime STAGIONI_RECENTI stagioni.
+
+    Le regole, nell'ordine in cui si applicano:
+      - nessun tempo prima: e' il primo;
+      - piu' veloce di tutti i tempi precedenti: personale. Serve un tempo
+        strettamente migliore, un pari non e' un miglioramento;
+      - piu' veloce di tutti i tempi delle ultime stagioni: miglior tempo
+        recente. Vale anche per chi eguaglia il personale, se il personale
+        e' piu' vecchio della finestra e nella finestra non c'era di meglio;
+      - nelle ultime stagioni non c'era nessun tempo: niente, perche' non
+        c'era niente da battere. E' il caso di chi torna su una gara dopo
+        anni, ed e' una scelta voluta, non una dimenticanza: il miglior
+        tempo recente sarebbe vero alla lettera solo perche' e' l'unico.
+    """
+    t = _centesimi(tempo)
+    if t is None:
+        return None
+    if not _conta(n_prima):
+        return PRIMO
+    meglio = _centesimi(best_prima)
+    if meglio is not None and t < meglio:
+        return PB
+    if not _conta(n_recente):
+        return None
+    meglio_recente = _centesimi(best_recente)
+    if meglio_recente is not None and t < meglio_recente:
+        return RECENTE
+    return None
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def load_primati(comp_id: int, inizio,
+                 solo_fin: bool | None = None) -> dict[tuple[int, int], str]:
+    """
+    (race_id, athlete_id) -> PRIMO, PB o RECENTE, per i tempi di una
+    manifestazione che meritano un segno. Chi non ne merita non c'e'.
+
+    `inizio` e' la data di inizio della manifestazione: da li' si ricava la
+    finestra delle ultime stagioni. `solo_fin` e' quello del filtro FIN, e
+    vale sullo storico come in Scheda atleta, cosi' il personale di qui e
+    quello della scheda dicono sempre la stessa cosa.
+
+    Stesso TTL dei risultati, apposta: le due letture si riempiono insieme
+    e si svuotano insieme quando `crud` scrive un tempo, quindi non capita
+    di vedere un tempo senza il suo segno o un segno senza il suo tempo.
+    """
+    da = season_mod.inizio_stagioni(pd.Timestamp(inizio).date(),
+                                    STAGIONI_RECENTI)
+    df = query_df(con_fin(COMPETITION_HISTORY_SQL, solo_fin),
+                  (int(comp_id), da, da))
+    if df.empty:
+        return {}
+    df = _num(df, ("race_id", "athlete_id", "time_sec", "best_prima",
+                   "n_prima", "best_recente", "n_recente"))
+    fuori: dict[tuple[int, int], str] = {}
+    for r in df.to_dict("records"):
+        esito = esito_tempo(r["time_sec"], r["best_prima"], r["n_prima"],
+                            r["best_recente"], r["n_recente"])
+        if esito:
+            fuori[(int(r["race_id"]), int(r["athlete_id"]))] = esito
+    return fuori
 
 
 @st.cache_data(ttl=TTL_AGENDA, show_spinner=False)

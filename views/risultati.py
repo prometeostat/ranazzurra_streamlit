@@ -26,7 +26,8 @@ import data
 import season as season_mod
 from theme import fmt_time, pool_label
 from views._common import (apply_fin, blocchi_programma, etichetta_punti,
-                           inline_filters, page_header, season_year)
+                           fin_filter, inline_filters, page_header,
+                           season_year)
 
 # Quanto avanti si guarda, come in Agenda: le manifestazioni piu' in la'
 # esistono a calendario ma non hanno ancora niente da mostrare qui, e
@@ -118,6 +119,44 @@ if url.lower().startswith(("http://", "https://")):
             f'rel="noopener">{nome} ↗</a>')
 
 res = data.load_competition_results(int(vista))
+
+# I segni accanto ai tempi: personale, migliore delle ultime stagioni,
+# primo tempo. Si chiede il calcolo solo se c'e' almeno un tempo, cosi' una
+# manifestazione ancora da nuotare non costa una query in piu'. Il filtro
+# FIN vale sullo storico, come in Scheda atleta.
+PRIMATI: dict = {}
+if not res.empty and res["time_sec"].notna().any() and not pd.isna(
+        riga["start_date"]):
+    PRIMATI = data.load_primati(int(vista), riga["start_date"], fin_filter())
+
+# Emoji, titolo per il passaggio del mouse, e parola per la legenda in
+# fondo. Le emoji sono scelte fra quelle che l'app non usa gia' per altro:
+# niente medaglie (posizioni), stelle (preferiti), pallini (certificati) o
+# coppa (Classifiche).
+ICONE = {
+    data.PRIMO: ("🆕", "Primo tempo in questa gara e vasca",
+                 "primo tempo in quella gara e vasca"),
+    data.PB: ("🔥", "Personale: il miglior tempo di sempre in questa gara "
+                   "e vasca", "personale"),
+    data.RECENTE: ("📈", f"Miglior tempo delle ultime "
+                         f"{data.STAGIONI_RECENTI} stagioni in questa gara "
+                         f"e vasca",
+                   f"miglior tempo delle ultime {data.STAGIONI_RECENTI} "
+                   f"stagioni"),
+}
+
+
+def _segno(r: dict) -> str:
+    """L'emoji accanto al tempo, o niente."""
+    esito = PRIMATI.get((int(r["race_id"]), int(r["athlete_id"])))
+    if not esito or esito not in ICONE:
+        return ""
+    emoji, titolo, _ = ICONE[esito]
+    titolo = html.escape(titolo, quote=True)
+    return (f'<span class="mf-segno" title="{titolo}" '
+            f'aria-label="{titolo}">{emoji}</span>')
+
+
 n_gare = 0 if res.empty else len(
     res.groupby(["is_relay", "stroke", "distance", "pool_length"], dropna=False))
 n_atleti = 0 if res.empty else int(res["athlete_id"].nunique())
@@ -175,13 +214,27 @@ def _blocco(relay: bool, stroke: str, dist: str, pool, g: pd.DataFrame) -> str:
     if tempi < len(g):
         cappello += f" · {tempi} con tempo"
 
+    record = g.to_dict("records")
+    # Il segno solo sulle individuali: nelle staffette il tempo e' della
+    # squadra, e la query non le guarda nemmeno.
+    segni = ["" if relay or pd.isna(r["time_sec"]) else _segno(r)
+             for r in record]
+    # Se nel riquadro c'e' almeno un segno, tutte le righe gli tengono il
+    # posto, anche vuoto: i tempi sono allineati a destra e si leggono in
+    # colonna, e un'emoji solo su alcune righe li farebbe slittare. Dove
+    # non c'e' nessun segno non si tiene il posto, per non lasciare un buco.
+    posto = '<span class="mf-segno" aria-hidden="true"></span>'
+    if any(segni):
+        segni = [s_ or posto for s_ in segni]
+
     righe = ""
-    for i, r in enumerate(g.to_dict("records"), start=1):
+    for i, r in enumerate(record, start=1):
         mio = me is not None and int(r["athlete_id"]) == int(me)
         # Nelle staffette il tempo e' quello della squadra, ripetuto su ogni
         # frazionista: numerare i frazionisti darebbe una classifica finta.
         pos = "" if relay or pd.isna(r["time_sec"]) else f"{i}"
         tempo = fmt_time(r["time_sec"]) if pd.notna(r["time_sec"]) else "—"
+        segno = segni[i - 1]
         # i punti si chiamano col nome giusto: FIN sulle gare federali,
         # Acquasport sulle giornate di circuito
         punti = ("" if pd.isna(r.get("fin_score"))
@@ -193,7 +246,7 @@ def _blocco(relay: bool, stroke: str, dist: str, pool, g: pd.DataFrame) -> str:
             f'<div class="mf-chi"><div class="mf-nome">'
             f'{html.escape(str(r["full_name"]).title())}</div>'
             f'<span class="badge-cat">{_categoria(r)}</span></div>'
-            f'<div class="mf-dx"><div class="mf-tempo">{tempo}</div>'
+            f'<div class="mf-dx"><div class="mf-tempo">{tempo}{segno}</div>'
             f'<div class="mf-punti">{punti}</div></div>'
             f'</div>'
         )
@@ -222,6 +275,22 @@ for titolo, fetta in blocchi_programma(res):
         pezzi += f'<div class="stroke-head">{html.escape(titolo)}</div>'
     pezzi += _gruppi(fetta)
 st.html(pezzi)
+
+# La legenda dei segni, con le sole voci che compaiono davvero in pagina:
+# elencare un simbolo che non c'e' e' rumore. Sul telefono il titolo al
+# passaggio del mouse non si vede, quindi e' qui che si spiegano.
+_presenti = [e for e in (data.PB, data.RECENTE, data.PRIMO)
+             if e in PRIMATI.values()]
+if _presenti:
+    _voci = ", ".join(f"{ICONE[e][0]} {ICONE[e][2]}" for e in _presenti)
+    _con_chi = {
+        None: "tutte le manifestazioni precedenti",
+        True: "le sole manifestazioni FIN precedenti, come chiede il filtro",
+        False: "le sole manifestazioni non FIN precedenti, come chiede il "
+               "filtro",
+    }.get(fin_filter(), "tutte le manifestazioni precedenti")
+    st.caption(f"Accanto ai tempi: {_voci}. Il confronto è con {_con_chi}, "
+               "a parità di gara e vasca.")
 
 if _futura(riga):
     st.caption(

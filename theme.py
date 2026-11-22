@@ -605,6 +605,14 @@ a.meet-link:hover .meet-card {
             white-space:nowrap; }
 .mf-punti { font-family:'Barlow Condensed',sans-serif; font-size:11px;
             color:var(--muted); letter-spacing:0.5px; white-space:nowrap; }
+/* Il segno accanto al tempo: personale, migliore recente o primo tempo.
+   Un filo piu' piccolo del tempo, perche' il protagonista resta il numero.
+   Larghezza fissa perche' nei riquadri che ne hanno uno anche le altre
+   righe gli tengono il posto, vuoto, e i tempi restano in colonna. Il
+   cursore a punto interrogativo solo dove c'e' un titolo da leggere. */
+.mf-segno { display:inline-block; width:20px; margin-left:4px;
+            text-align:center; font-size:14px; vertical-align:1px; }
+.mf-segno[title] { cursor:help; }
 
 /* ── Bottone Iscriviti dell'agenda ──
    Quadrato, accanto alla scheda della manifestazione: icona sopra e parola

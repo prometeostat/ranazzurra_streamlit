@@ -1644,6 +1644,88 @@ ORDER BY """ + ORDINE_PROGRAMMA + """, re.is_relay, s.name, dist_num,
          btrim(a.last_name), btrim(a.first_name)
 """
 
+# Lo storico che serve a dire, di ogni tempo di una manifestazione, se e' un
+# personale, il migliore delle ultime stagioni o il primo in quella gara. La
+# query non decide niente: porta i numeri, e la regola la applica
+# data.esito_tempo(), che cosi' si prova senza database.
+#
+# Per ogni tempo individuale della manifestazione (`qui`) si guarda lo
+# storico dello stesso atleta nella stessa gara e vasca (`storia`), nelle
+# manifestazioni iniziate PRIMA di questa: la condizione sulla data esclude
+# gia' la manifestazione stessa, anche quando dura piu' giorni, perche' la
+# data che conta e' l'inizio della manifestazione e non quello della gara.
+#
+# "Stessa gara" vuol dire stessi nome dello stile, distanza e vasca: e' la
+# chiave di PB_SQL e ALLTIME_PB_SQL, presa uguale apposta, cosi' il personale
+# che si vede qui non puo' contraddire quello della Scheda atleta. Per lo
+# stesso motivo il marcatore /*FIN*/ sta sulla JOIN dello storico e solo li':
+# con il filtro FIN acceso contano solo le manifestazioni ufficiali, come in
+# Scheda. La manifestazione stessa ha un alias suo (`questa`), cosi' il
+# filtro non la tocca.
+#
+# Staffette escluse: il tempo e' della squadra, non dell'atleta.
+# %s: comp_id, inizio della finestra recente, inizio della finestra recente
+COMPETITION_HISTORY_SQL = """
+WITH qui AS (
+    SELECT
+        r.id                                     AS race_id,
+        ar.athlete_id,
+        s.name                                   AS stroke,
+        d.type                                   AS distance,
+        r.pool_length,
+        EXTRACT(EPOCH FROM ar.final_time)::float AS time_sec,
+        questa.start_date
+    FROM athlete_races ar
+    JOIN races        r      ON r.id = ar.race_id
+                            AND r.is_deleted = FALSE
+    JOIN competitions questa ON questa.id = r.competition_id
+                            AND questa.is_deleted = FALSE
+    JOIN race_events  re     ON re.id = r.race_event_id
+                            AND re.is_deleted = FALSE
+    JOIN strokes      s      ON s.id = re.stroke_id  AND s.is_deleted = FALSE
+    JOIN distances    d      ON d.id = re.distance_id AND d.is_deleted = FALSE
+    WHERE r.competition_id = %s
+      AND ar.is_deleted   = FALSE
+      AND ar.final_time  IS NOT NULL
+      AND re.is_relay     = FALSE
+),
+storia AS (
+    SELECT
+        ar.athlete_id,
+        s.name                                   AS stroke,
+        d.type                                   AS distance,
+        r.pool_length,
+        co.start_date,
+        EXTRACT(EPOCH FROM ar.final_time)::float AS time_sec
+    FROM athlete_races ar
+    JOIN races        r  ON r.id  = ar.race_id       AND r.is_deleted = FALSE
+    JOIN competitions co ON co.id = r.competition_id AND co.is_deleted = FALSE /*FIN*/
+    JOIN race_events  re ON re.id = r.race_event_id  AND re.is_deleted = FALSE
+    JOIN strokes      s  ON s.id  = re.stroke_id     AND s.is_deleted  = FALSE
+    JOIN distances    d  ON d.id  = re.distance_id   AND d.is_deleted  = FALSE
+    WHERE ar.is_deleted   = FALSE
+      AND ar.final_time  IS NOT NULL
+      AND re.is_relay     = FALSE
+      AND ar.athlete_id IN (SELECT athlete_id FROM qui)
+)
+SELECT
+    q.race_id,
+    q.athlete_id,
+    q.time_sec,
+    MIN(st.time_sec)                                    AS best_prima,
+    COUNT(st.time_sec)                                  AS n_prima,
+    MIN(st.time_sec)   FILTER (WHERE st.start_date >= %s::date) AS best_recente,
+    COUNT(st.time_sec) FILTER (WHERE st.start_date >= %s::date) AS n_recente
+FROM qui q
+LEFT JOIN storia st
+       ON st.athlete_id  = q.athlete_id
+      AND st.stroke      = q.stroke
+      AND st.distance    = q.distance
+      AND st.pool_length = q.pool_length
+      AND st.start_date  < q.start_date
+GROUP BY q.race_id, q.athlete_id, q.time_sec
+"""
+
 
 # ══════════════════════════════════════════════════════════════════
 # Preferiti

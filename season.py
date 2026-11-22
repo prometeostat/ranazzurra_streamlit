@@ -41,6 +41,19 @@ def previous_bounds(season_year: int) -> tuple[str, str]:
     return bounds(season_year - 1)
 
 
+def inizio_stagioni(giorno: _dt.date, quante: int) -> str:
+    """
+    Primo giorno della finestra fatta dalla stagione di `giorno` e dalle
+    `quante - 1` stagioni prima, come stringa ISO.
+
+    Serve al "miglior tempo delle ultime tre stagioni" dei risultati: per
+    una gara del 21/11/2026, stagione 2026/27, la finestra parte dal
+    01/09/2024. Si contano stagioni e non mesi perche' e' cosi' che la
+    squadra ragiona, come per le categorie: settembre fa da spartiacque.
+    """
+    return bounds(current_season_year(giorno) - (int(quante) - 1))[0]
+
+
 def label(season_year: int) -> str:
     """2025 -> '2025/2026'; ALL -> 'Tutte le stagioni'."""
     if is_all(season_year):
